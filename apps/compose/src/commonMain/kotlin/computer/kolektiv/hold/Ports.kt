@@ -11,6 +11,10 @@ interface PocketPorts {
         onError("This build can't open pictures yet.")
     }
 
+    fun takePicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit) {
+        onError("This build can't use the camera yet.")
+    }
+
     fun saveBlob(id: String, bytes: ByteArray) = Unit
 
     fun loadBlob(id: String): ByteArray? = null

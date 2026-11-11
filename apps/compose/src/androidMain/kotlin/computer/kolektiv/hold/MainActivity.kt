@@ -20,7 +20,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import android.net.Uri
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import computer.kolektiv.hold.geo.nominatimAddress
 import computer.kolektiv.hold.store.JsonHoldRepository
 import java.io.File
@@ -35,14 +37,20 @@ class MainActivity : ComponentActivity() {
     private var locationRefused: (() -> Unit)? = null
     private var whenMic: (() -> Unit)? = null
     private var micRefused: (() -> Unit)? = null
+    private var whenCamera: (() -> Unit)? = null
+    private var cameraRefused: (() -> Unit)? = null
+    private var photoUri: Uri? = null
 
     private val pickPicture = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri == null) {
-            pictureError?.invoke("No picture.")
-            return@registerForActivityResult
-        }
-        val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-        if (bytes == null) pictureError?.invoke("Couldn't read that picture.") else pictureBytes?.invoke(bytes)
+        deliverPicture(uri)
+    }
+
+    private val takeShot = registerForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
+        deliverPicture(if (saved) photoUri else null)
+    }
+
+    private val askCamera = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) whenCamera?.invoke() else cameraRefused?.invoke()
     }
 
     private val askLocation = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
@@ -112,6 +120,33 @@ class MainActivity : ComponentActivity() {
         pictureBytes = onBytes
         pictureError = onError
         pickPicture.launch("image/*")
+    }
+
+    internal fun takePicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit) {
+        val launch = {
+            val file = File(cacheDir, "shot-${System.currentTimeMillis()}.jpg")
+            val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
+            photoUri = uri
+            pictureBytes = onBytes
+            pictureError = onError
+            takeShot.launch(uri)
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            launch()
+            return
+        }
+        whenCamera = launch
+        cameraRefused = { onError("Camera permission was refused.") }
+        askCamera.launch(Manifest.permission.CAMERA)
+    }
+
+    private fun deliverPicture(uri: Uri?) {
+        if (uri == null) {
+            pictureError?.invoke("No picture.")
+            return
+        }
+        val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        if (bytes == null) pictureError?.invoke("Couldn't read that picture.") else pictureBytes?.invoke(bytes)
     }
 }
 
@@ -188,6 +223,10 @@ private class AndroidPorts(private val activity: MainActivity) : PocketPorts {
         activity.choosePicture(onBytes, onError)
     }
 
+    override fun takePicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit) {
+        activity.takePicture(onBytes, onError)
+    }
+
     override fun saveBlob(id: String, bytes: ByteArray) {
         blobs.mkdirs()
         File(blobs, safe(id)).writeBytes(bytes)
@@ -251,16 +290,21 @@ private class AndroidSpeech(private val activity: MainActivity) : Speech {
     private var transcript = ""
     private var onDone: ((CatchResult) -> Unit)? = null
     private var onLevel: ((Float) -> Unit)? = null
+    private var onPartial: (String) -> Unit = {}
+    private var transcribe = true
+    private var muted = false
+    private var paused = false
     private var delivered = false
     private val peaks = ArrayList<Float>()
     private val handler = Handler(Looper.getMainLooper())
     private val clock = Handler(Looper.getMainLooper())
     private val poll = object : Runnable {
         override fun run() {
-            val rec = recorder ?: return
-            val level = (rec.maxAmplitude / 32767f).coerceIn(0f, 1f)
-            peaks += level
-            onLevel?.invoke(level)
+            if (!paused) {
+                val level = if (muted) 0f else runCatching { (recorder?.maxAmplitude ?: 0) / 32767f }.getOrDefault(0f).coerceIn(0f, 1f)
+                peaks += level
+                onLevel?.invoke(level)
+            }
             clock.postDelayed(this, 70)
         }
     }
@@ -285,10 +329,39 @@ private class AndroidSpeech(private val activity: MainActivity) : Speech {
         transcript = ""
         peaks.clear()
         delivered = false
+        paused = false
+        muted = false
+        this.transcribe = transcribe
+        this.onPartial = onPartial
         onDone = null
         this.onLevel = onLevel
         clock.post(poll)
         if (transcribe) startRecognizer(onPartial)
+    }
+
+    override fun pause() {
+        paused = true
+        runCatching { recorder?.pause() }
+        recognizer?.stopListening()
+    }
+
+    override fun resume() {
+        paused = false
+        if (muted) return
+        runCatching { recorder?.resume() }
+        if (transcribe) startRecognizer(onPartial)
+    }
+
+    override fun setMuted(muted: Boolean) {
+        this.muted = muted
+        if (paused) return
+        if (muted) {
+            runCatching { recorder?.pause() }
+            recognizer?.stopListening()
+        } else {
+            runCatching { recorder?.resume() }
+            if (transcribe) startRecognizer(onPartial)
+        }
     }
 
     override fun stop(onDone: (CatchResult) -> Unit) {
@@ -347,6 +420,8 @@ private class AndroidSpeech(private val activity: MainActivity) : Speech {
     }
 
     private fun startRecognizer(onPartial: (String) -> Unit) {
+        recognizer?.destroy()
+        recognizer = null
         if (!SpeechRecognizer.isRecognitionAvailable(activity)) return
         val rec = runCatching { SpeechRecognizer.createSpeechRecognizer(activity) }.getOrNull() ?: return
         recognizer = rec

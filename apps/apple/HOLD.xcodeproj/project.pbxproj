@@ -1,0 +1,372 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+		A10000000000000000000009 /* HOLDApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000006; };
+		A1000000000000000000000A /* PhoneLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000007; };
+		A1000000000000000000000B /* WatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000008; };
+		A10000000000000000000011 /* HOLD Watch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = A10000000000000000000005; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+
+		A10000000000000000000010 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				A10000000000000000000011 /* HOLD Watch.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+
+		A10000000000000000000004 /* HOLD.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HOLD.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000005 /* HOLD Watch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "HOLD Watch.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000006 /* HOLDApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HOLDApp.swift; sourceTree = "<group>"; };
+		A10000000000000000000007 /* PhoneLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneLink.swift; sourceTree = "<group>"; };
+		A10000000000000000000008 /* WatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchApp.swift; sourceTree = "<group>"; };
+
+		A1000000000000000000000E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1000000000000000000000F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+
+		A10000000000000000000015 = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000013 /* HOLD */,
+				A10000000000000000000014 /* Watch */,
+				A10000000000000000000016 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A10000000000000000000013 /* HOLD */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000006 /* HOLDApp.swift */,
+				A10000000000000000000007 /* PhoneLink.swift */,
+			);
+			path = HOLD;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000014 /* Watch */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000008 /* WatchApp.swift */,
+			);
+			path = Watch;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000016 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000004 /* HOLD.app */,
+				A10000000000000000000005 /* HOLD Watch.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+
+		A10000000000000000000002 /* HOLD */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000017;
+			buildPhases = (
+				A10000000000000000000012 /* Compile Kotlin */,
+				A1000000000000000000000C /* Sources */,
+				A1000000000000000000000E /* Frameworks */,
+				A10000000000000000000010 /* Embed Watch Content */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A10000000000000000000020 /* PBXTargetDependency */,
+			);
+			name = HOLD;
+			productName = HOLD;
+			productReference = A10000000000000000000004;
+			productType = "com.apple.product-type.application";
+		};
+		A10000000000000000000003 /* HOLD Watch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000018;
+			buildPhases = (
+				A1000000000000000000000D /* Sources */,
+				A1000000000000000000000F /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "HOLD Watch";
+			productName = "HOLD Watch";
+			productReference = A10000000000000000000005;
+			productType = "com.apple.product-type.application";
+		};
+
+		A10000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					A10000000000000000000002 = { CreatedOnToolsVersion = 15.0; };
+					A10000000000000000000003 = { CreatedOnToolsVersion = 15.0; };
+				};
+			};
+			buildConfigurationList = A10000000000000000000019;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A10000000000000000000015;
+			productRefGroup = A10000000000000000000016;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A10000000000000000000002 /* HOLD */,
+				A10000000000000000000003 /* HOLD Watch */,
+			);
+		};
+
+		A10000000000000000000012 /* Compile Kotlin */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			name = "Compile Kotlin";
+			outputFileListPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/../..\"\n./gradlew :apps:compose:embedAndSignAppleFrameworkForXcode\n";
+		};
+
+		A1000000000000000000000C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000009 /* HOLDApp.swift in Sources */,
+				A1000000000000000000000A /* PhoneLink.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1000000000000000000000D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000000000000000000000B /* WatchApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+
+		A10000000000000000000020 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000000003;
+			targetProxy = A10000000000000000000021;
+		};
+		A10000000000000000000021 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000000000000000000001;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000003;
+			remoteInfo = "HOLD Watch";
+		};
+
+		A1000000000000000000001E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A1000000000000000000001F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A1000000000000000000001A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/../compose/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = HOLD;
+				INFOPLIST_KEY_NSCameraUsageDescription = "HOLD can draw on a photo you take.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "HOLD saves the place you are standing.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "HOLD records voice notes on this device.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "HOLD can draw on a photo you choose.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					HoldApp,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = computer.kolektiv.hold;
+				PRODUCT_NAME = HOLD;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		A1000000000000000000001B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/../compose/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = HOLD;
+				INFOPLIST_KEY_NSCameraUsageDescription = "HOLD can draw on a photo you take.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "HOLD saves the place you are standing.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "HOLD records voice notes on this device.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "HOLD can draw on a photo you choose.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					HoldApp,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = computer.kolektiv.hold;
+				PRODUCT_NAME = HOLD;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		A1000000000000000000001C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = HOLD;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "HOLD records a voice catch on your wrist.";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = computer.kolektiv.hold;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = computer.kolektiv.hold.watch;
+				PRODUCT_NAME = "HOLD Watch";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 9.0;
+			};
+			name = Debug;
+		};
+		A1000000000000000000001D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = HOLD;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "HOLD records a voice catch on your wrist.";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = computer.kolektiv.hold;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = computer.kolektiv.hold.watch;
+				PRODUCT_NAME = "HOLD Watch";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 9.0;
+			};
+			name = Release;
+		};
+
+		A10000000000000000000019 /* Build configuration list for PBXProject "HOLD" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000000000000000000001E /* Debug */,
+				A1000000000000000000001F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000017 /* Build configuration list for PBXNativeTarget "HOLD" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000000000000000000001A /* Debug */,
+				A1000000000000000000001B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000018 /* Build configuration list for PBXNativeTarget "HOLD Watch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000000000000000000001C /* Debug */,
+				A1000000000000000000001D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+	};
+	rootObject = A10000000000000000000001 /* Project object */;
+}

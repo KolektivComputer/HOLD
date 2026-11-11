@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -43,7 +44,23 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
+import com.composables.icons.lucide.Camera
+import com.composables.icons.lucide.Check
+import com.composables.icons.lucide.MicOff
+import com.composables.icons.lucide.Pencil
+import com.composables.icons.lucide.Square
 import com.composables.icons.lucide.FileText
+import kotlinx.coroutines.delay
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.MapPin
 import com.composables.icons.lucide.Mic
@@ -58,6 +75,7 @@ import computer.kolektiv.hold.geo.project
 import computer.kolektiv.hold.geo.tilesAround
 import computer.kolektiv.hold.geo.unproject
 import computer.kolektiv.hold.model.Entry
+import computer.kolektiv.hold.model.NamedItem
 import computer.kolektiv.hold.model.Payload
 import computer.kolektiv.hold.model.isExampleSet
 import computer.kolektiv.hold.model.medium
@@ -70,6 +88,143 @@ import kotlin.io.encoding.Base64
 import kotlinx.coroutines.launch
 
 private val kinds = listOf("note", "number", "contact", "place", "radio", "health")
+
+val LocalSheetDismiss = staticCompositionLocalOf<() -> Unit> { {} }
+
+@Composable
+fun EntrySheet(onDismiss: () -> Unit, content: @Composable () -> Unit) {
+    var shown by remember { mutableStateOf(false) }
+    var closing by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    LaunchedEffect(closing) {
+        if (!closing) return@LaunchedEffect
+        shown = false
+        delay(280)
+        onDismiss()
+    }
+    val offset by animateDpAsState(if (shown) 0.dp else 900.dp, tween(280), label = "sheet")
+    HoldBackHandler(enabled = !closing) { closing = true }
+    CompositionLocalProvider(LocalSheetDismiss provides { closing = true }) {
+        Box(Modifier.fillMaxSize().offset(y = offset).background(HoldThemeColors.bg)) {
+            content()
+        }
+    }
+}
+
+@Composable
+fun NotePage(
+    title: String,
+    body: String,
+    tagIds: List<String>,
+    tags: List<NamedItem>,
+    startEditing: Boolean,
+    onTags: (List<String>) -> Unit,
+    onCreateTag: (String) -> Unit,
+    onCommit: (String, String, List<String>) -> Unit,
+    onDiscard: () -> Unit,
+) {
+    var editing by remember { mutableStateOf(startEditing) }
+    var header by remember { mutableStateOf(title) }
+    var rest by remember { mutableStateOf(body) }
+    val headerStyle = MaterialTheme.typography.headlineMedium.merge(TextStyle(color = HoldThemeColors.fg))
+    val bodyStyle = MaterialTheme.typography.bodyLarge.merge(TextStyle(color = HoldThemeColors.fg))
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = {
+                if (editing && (header.isNotBlank() || rest.isNotBlank())) onCommit(header.trim(), rest.trim(), tagIds)
+                onDiscard()
+            }) { Icon(Lucide.X, "Close", tint = HoldThemeColors.fg) }
+            TextButton(onClick = onDiscard) { Text("Discard") }
+            Box(Modifier.weight(1f))
+            IconButton(onClick = {
+                if (editing) {
+                    if (header.isNotBlank() || rest.isNotBlank()) onCommit(header.trim(), rest.trim(), tagIds)
+                    editing = false
+                } else {
+                    editing = true
+                }
+            }) {
+                Icon(if (editing) Lucide.Check else Lucide.Pencil, if (editing) "Done" else "Edit", tint = HoldThemeColors.fg)
+            }
+        }
+        if (editing) {
+            TagEditor(tagIds, tags, onTags, onCreateTag)
+        } else {
+            TagChips(tagIds, tags)
+        }
+        if (editing) {
+            BasicTextField(
+                value = header,
+                onValueChange = { value ->
+                    val parts = value.split('\n', limit = 2)
+                    header = parts[0]
+                    if (parts.size == 2) rest = listOf(parts[1], rest).filter { it.isNotEmpty() }.joinToString("\n")
+                },
+                textStyle = headerStyle,
+                cursorBrush = SolidColor(HoldThemeColors.accent),
+                modifier = Modifier.fillMaxWidth(),
+                decorationBox = { inner ->
+                    if (header.isEmpty()) Text("Title", style = headerStyle, color = HoldThemeColors.muted)
+                    inner()
+                },
+            )
+            BasicTextField(
+                value = rest,
+                onValueChange = { rest = it },
+                textStyle = bodyStyle,
+                cursorBrush = SolidColor(HoldThemeColors.accent),
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                decorationBox = { inner ->
+                    if (rest.isEmpty()) Text("Write", style = bodyStyle, color = HoldThemeColors.muted)
+                    inner()
+                },
+            )
+        } else {
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(header.ifBlank { "New note" }, style = headerStyle)
+                if (rest.isNotBlank()) Text(rest, style = bodyStyle)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TagChips(selected: List<String>, tags: List<NamedItem>) {
+    val names = selected.mapNotNull { id -> tags.find { it.id == id && it.deletedAt == null }?.name }
+    if (names.isEmpty()) return
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        names.forEach { name ->
+            Text(
+                name,
+                color = HoldThemeColors.bg,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(HoldThemeColors.accent)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PhotoSourceDialog(onBlank: (() -> Unit)?, onCamera: () -> Unit, onLibrary: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = HoldThemeColors.bg,
+        title = { Text("Photo") },
+        text = { Text(if (onBlank == null) "Take a photo or choose one." else "Start blank, or draw on a photo.") },
+        confirmButton = {
+            if (onBlank != null) TextButton(onClick = onBlank) { Text("Blank page") }
+            else TextButton(onClick = onCamera) { Text("Camera") }
+        },
+        dismissButton = {
+            Row {
+                if (onBlank != null) TextButton(onClick = onCamera) { Text("Camera") }
+                TextButton(onClick = onLibrary) { Text("Library") }
+            }
+        },
+    )
+}
 
 @Composable
 fun HoldFab(open: Boolean, onToggle: () -> Unit, onPick: (String) -> Unit) {
@@ -157,6 +312,19 @@ fun LogScreen(controller: HoldController, ports: PocketPorts) {
 @Composable
 fun WriteScreen(controller: HoldController, ports: PocketPorts) {
     val draft = controller.draft
+    val dismiss = LocalSheetDismiss.current
+    var askPhoto by remember { mutableStateOf(false) }
+    fun receiveShot(bytes: ByteArray) {
+        draft.shot = bytes
+        draft.shotId = draft.shotId ?: newId()
+    }
+    LaunchedEffect(controller.shotSource) {
+        val source = controller.shotSource
+        if (source.isBlank()) return@LaunchedEffect
+        controller.shotSource = ""
+        if (source == "camera") ports.takePicture(::receiveShot) { controller.status = it }
+        else ports.pickPicture(::receiveShot) { controller.status = it }
+    }
     if (draft.kind == "note" && draft.medium == "ink") {
         val background = remember(draft.shot) { draft.shot?.let { decodePocketImage(it) } }
         key(draft.shotId ?: "ink") {
@@ -176,26 +344,47 @@ fun WriteScreen(controller: HoldController, ports: PocketPorts) {
                     if (id !in draft.tagIds) draft.tagIds = draft.tagIds + id
                 },
                 onSave = { fileDraft(controller, ports) },
-                onDiscard = {
-                    draft.clear()
-                    controller.screen = "log"
-                },
-                onOpenImage = {
-                    ports.pickPicture(
-                        onBytes = {
-                            draft.shot = it
-                            draft.shotId = draft.shotId ?: newId()
-                        },
-                        onError = { controller.status = it },
-                    )
-                },
+                onDiscard = dismiss,
+                onOpenImage = { askPhoto = true },
                 modifier = Modifier.fillMaxSize(),
             )
         }
+        if (askPhoto) {
+            PhotoSourceDialog(onBlank = null, onCamera = {
+                askPhoto = false
+                ports.takePicture(::receiveShot) { controller.status = it }
+            }, onLibrary = {
+                askPhoto = false
+                ports.pickPicture(::receiveShot) { controller.status = it }
+            }, onDismiss = { askPhoto = false })
+        }
         return
     }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        TextButton(onClick = { controller.screen = "log" }) { Text("Back") }
+    if (draft.kind == "note") {
+        NotePage(
+            title = draft.title,
+            body = draft.body,
+            tagIds = draft.tagIds,
+            tags = controller.snapshot.tags,
+            startEditing = true,
+            onTags = { draft.tagIds = it },
+            onCreateTag = { name ->
+                val id = controller.addTag(name) ?: return@NotePage
+                if (id !in draft.tagIds) draft.tagIds = draft.tagIds + id
+            },
+            onCommit = { header, rest, tags ->
+                draft.title = header
+                draft.body = rest
+                draft.tagIds = tags
+                fileDraft(controller, ports)
+            },
+            onDiscard = dismiss,
+        )
+        return
+    }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextButton(onClick = dismiss) { Text("Close") }
+        TextButton(onClick = dismiss) { Text("Discard") }
         if (draft.kind != "note") {
             Row(Modifier.horizontalScroll(rememberScrollState())) {
                 kinds.forEach { item ->
@@ -337,6 +526,7 @@ fun DetailScreen(entry: Entry, controller: HoldController, ports: PocketPorts, p
     var strokes by remember(entry.id) { mutableStateOf(note?.ink ?: emptyList()) }
     var shotId by remember(entry.id) { mutableStateOf(note?.shotId) }
     var shot by remember(entry.id) { mutableStateOf(shotId?.let { ports.loadBlob(it) }) }
+    var askPhoto by remember(entry.id) { mutableStateOf(false) }
     var playing by remember(entry.id) { mutableStateOf(false) }
     val background = remember(shot) { shot?.let { decodePocketImage(it) } }
     val scope = rememberCoroutineScope()
@@ -369,14 +559,8 @@ fun DetailScreen(entry: Entry, controller: HoldController, ports: PocketPorts, p
                         ),
                     )
                 },
-                onDiscard = { controller.selectedId = null },
-                onOpenImage = {
-                    ports.pickPicture(onBytes = { bytes ->
-                        val id = shotId ?: newId()
-                        shot = bytes
-                        shotId = id
-                    }, onError = { controller.status = it })
-                },
+                onDiscard = LocalSheetDismiss.current,
+                onOpenImage = { askPhoto = true },
                 onRead = {
                     scope.launch {
                         controller.status = "Reading the page…"
@@ -387,10 +571,59 @@ fun DetailScreen(entry: Entry, controller: HoldController, ports: PocketPorts, p
                 },
             )
         }
+        if (askPhoto) {
+            PhotoSourceDialog(onBlank = null, onCamera = {
+                askPhoto = false
+                ports.takePicture(onBytes = { bytes ->
+                    val id = shotId ?: newId()
+                    shot = bytes
+                    shotId = id
+                }, onError = { controller.status = it })
+            }, onLibrary = {
+                askPhoto = false
+                ports.pickPicture(onBytes = { bytes ->
+                    val id = shotId ?: newId()
+                    shot = bytes
+                    shotId = id
+                }, onError = { controller.status = it })
+            }, onDismiss = { askPhoto = false })
+        }
         return
     }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        TextButton(onClick = { controller.selectedId = null }) { Text("Back") }
+    if (note != null) {
+        NotePage(
+            title = title,
+            body = body,
+            tagIds = tagIds,
+            tags = controller.snapshot.tags,
+            startEditing = false,
+            onTags = { tagIds = it },
+            onCreateTag = { name ->
+                val id = controller.addTag(name) ?: return@NotePage
+                if (id !in tagIds) tagIds = tagIds + id
+            },
+            onCommit = { header, rest, tags ->
+                controller.save(
+                    entry.copy(
+                        title = header.ifBlank { "Note" },
+                        body = rest,
+                        tagIds = tags,
+                        type = "text",
+                        payload = note,
+                    ),
+                    stay = true,
+                )
+            },
+            onDiscard = LocalSheetDismiss.current,
+        )
+        return
+    }
+    val dismiss = LocalSheetDismiss.current
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row {
+            TextButton(onClick = dismiss) { Text("Close") }
+            TextButton(onClick = dismiss) { Text("Discard") }
+        }
         OutlinedTextField(title, { title = it }, label = { Text("Title") }, modifier = Modifier.fillMaxWidth())
         if (voice != null) {
             Waveform(voice.peaks)
@@ -632,74 +865,93 @@ private fun PlaceMap(lat: Double?, lon: Double?, ports: PocketPorts, onPick: (Do
 fun VoiceScreen(controller: HoldController, speech: Speech, ports: PocketPorts) {
     var heard by remember { mutableStateOf("") }
     val levels = remember { mutableStateListOf<Float>() }
-    var note by remember { mutableStateOf("Tap once. It asks for the microphone, records, and draws the waveform.") }
+    var note by remember { mutableStateOf("Record") }
     var listening by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        TextButton(onClick = {
-            if (listening) speech.stop { }
-            controller.screen = "log"
-        }) { Text("Back") }
-        Text(note)
-        Waveform(levels)
-        Text(heard.ifBlank { "…" })
-        Button(onClick = {
-            if (listening) {
-                listening = false
-                note = "Saving…"
-                speech.stop { result ->
-                    val text = result.transcript.ifBlank { heard }.trim()
-                    if (text.isBlank() && result.audio == null) {
-                        note = "Nothing to file."
-                        return@stop
-                    }
-                    val now = nowMillis()
-                    val id = newId()
-                    if (result.audio != null) ports.saveBlob(id, result.audio)
-                    controller.save(
-                        Entry(
-                            id = id,
-                            kind = "voice",
-                            title = text.ifBlank { "Voice" }.take(80),
-                            createdAt = now,
-                            updatedAt = now,
-                            deviceId = controller.snapshot.sync.deviceId,
-                            type = "audio",
-                            payload = Payload.Voice(
-                                durationMs = result.durationMs,
-                                transcript = text,
-                                hasAudio = result.audio != null,
-                                mime = result.mime,
-                                peaks = packPeaks(result.peaks.ifEmpty { levels.toList() }),
-                            ),
-                        ),
-                    )
-                    note = if (text.isBlank()) "Saved the recording. No transcript came back." else "Saved on this device."
+    var paused by remember { mutableStateOf(false) }
+    var muted by remember { mutableStateOf(false) }
+    val dismiss = LocalSheetDismiss.current
+    fun file(result: CatchResult) {
+        val text = result.transcript.ifBlank { heard }.trim()
+        if (text.isBlank() && result.audio == null) {
+            note = "Nothing to file."
+            return
+        }
+        val now = nowMillis()
+        val id = newId()
+        if (result.audio != null) ports.saveBlob(id, result.audio)
+        controller.save(
+            Entry(
+                id = id,
+                kind = "voice",
+                title = text.lineSequence().first().ifBlank { "Voice" }.take(80),
+                createdAt = now,
+                updatedAt = now,
+                deviceId = controller.snapshot.sync.deviceId,
+                type = "audio",
+                payload = Payload.Voice(
+                    durationMs = result.durationMs,
+                    transcript = text,
+                    hasAudio = result.audio != null,
+                    mime = result.mime,
+                    peaks = packPeaks(result.peaks.ifEmpty { levels.toList() }),
+                ),
+            ),
+        )
+    }
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row {
+            TextButton(onClick = {
+                if (listening) speech.stop { }
+                dismiss()
+            }) { Text("Close") }
+            TextButton(onClick = {
+                if (listening) speech.stop { }
+                dismiss()
+            }) { Text("Discard") }
+        }
+        Text(note, color = HoldThemeColors.muted)
+        Waveform(levels, modifier = Modifier.fillMaxWidth())
+        if (heard.isNotBlank()) Text(heard.lineSequence().first(), style = MaterialTheme.typography.headlineMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (!listening) {
+                IconButton(onClick = {
+                    listening = true
+                    paused = false
+                    muted = false
                     heard = ""
                     levels.clear()
-                }
+                    note = "Recording"
+                    speech.listen(
+                        onPartial = { heard = it },
+                        onLevel = { level ->
+                            levels.add(level)
+                            if (levels.size > 96) levels.removeAt(0)
+                        },
+                        onError = {
+                            listening = false
+                            note = it
+                        },
+                        transcribe = controller.snapshot.settings.autoTranscribe && !muted,
+                    )
+                }) { Icon(Lucide.Mic, "Record", tint = HoldThemeColors.accent, modifier = Modifier.size(48.dp)) }
             } else {
-                listening = true
-                heard = ""
-                levels.clear()
-                note = "Recording"
-                speech.listen(
-                    onPartial = {
-                        heard = it
-                        note = "Recording"
-                    },
-                    onLevel = { level ->
-                        levels.add(level)
-                        if (levels.size > 96) levels.removeAt(0)
-                    },
-                    onError = {
-                        listening = false
-                        note = it
-                    },
-                    transcribe = controller.snapshot.settings.autoTranscribe,
-                )
+                IconButton(onClick = {
+                    paused = !paused
+                    if (paused) speech.pause() else speech.resume()
+                    note = if (paused) "Paused" else if (muted) "Muted" else "Recording"
+                }) { Icon(if (paused) Lucide.Play else Lucide.Pause, if (paused) "Resume" else "Pause", tint = HoldThemeColors.fg) }
+                IconButton(onClick = {
+                    muted = !muted
+                    speech.setMuted(muted)
+                    note = if (muted) "Muted" else if (paused) "Paused" else "Recording"
+                }) { Icon(if (muted) Lucide.MicOff else Lucide.Mic, if (muted) "Unmute" else "Mute", tint = HoldThemeColors.fg) }
+                IconButton(onClick = {
+                    listening = false
+                    note = "Saving…"
+                    speech.stop { file(it) }
+                }) { Icon(Lucide.Square, "Stop", tint = HoldThemeColors.accent) }
             }
-        }) { Text(if (listening) "Stop" else "Catch") }
-        Text("A shortcut can open hold://capture?kind=voice&text= with the dictated line. kind is voice, phone, or discord.", color = HoldThemeColors.muted)
+        }
     }
 }
 

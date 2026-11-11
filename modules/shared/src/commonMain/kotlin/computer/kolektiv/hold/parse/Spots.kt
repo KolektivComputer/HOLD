@@ -111,11 +111,13 @@ fun phraseEntry(kind: String, text: String, deviceId: String): Entry? {
             payload = Payload.Voice(transcript = trimmed),
         )
     }
+    val header = trimmed.lineSequence().first().trim().take(80)
+    val rest = trimmed.lineSequence().drop(1).joinToString("\n").trim()
     return Entry(
         id = newId(),
         kind = "note",
-        title = trimmed.take(80),
-        body = trimmed,
+        title = header.ifBlank { "Note" },
+        body = rest,
         createdAt = now,
         updatedAt = now,
         deviceId = deviceId,

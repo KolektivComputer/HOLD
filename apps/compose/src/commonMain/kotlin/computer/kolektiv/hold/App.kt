@@ -2,13 +2,16 @@ package computer.kolektiv.hold
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -64,6 +67,9 @@ data class CatchResult(
 interface Speech {
     fun listen(onPartial: (String) -> Unit, onLevel: (Float) -> Unit, onError: (String) -> Unit, transcribe: Boolean = true)
     fun stop(onDone: (CatchResult) -> Unit)
+    fun pause() = Unit
+    fun resume() = Unit
+    fun setMuted(muted: Boolean) = Unit
     fun transcribe(bytes: ByteArray, mime: String, onText: (String) -> Unit, onError: (String) -> Unit) {
         onError("This runtime can't transcribe yet.")
     }
@@ -121,6 +127,7 @@ class HoldController(private val repository: HoldRepository) {
     var status by mutableStateOf("")
     var tool by mutableStateOf("pen")
     var ink by mutableStateOf(INK_COLORS.first())
+    var shotSource by mutableStateOf("")
     val draft = NoteDraft()
 
     private fun initial(): Snapshot {
@@ -146,15 +153,18 @@ class HoldController(private val repository: HoldRepository) {
 
     fun selected(): Entry? = snapshot.entries.find { it.id == selectedId && it.deletedAt == null }
 
-    fun save(entry: Entry, stay: Boolean = false) {
+    fun save(entry: Entry, stay: Boolean = false, focus: Boolean = true) {
         val fresh = snapshot.entries.none { it.id == entry.id }
         val typed = if (entry.type.isBlank()) entry.copy(type = entry.medium()) else entry
         val tagged = if (fresh) withAutoTags(typed) else typed
         val next = tagged.copy(updatedAt = nowMillis(), dirty = true)
         snapshot = snapshot.copy(entries = snapshot.entries.filter { it.id != next.id } + next)
         repository.save(snapshot)
-        selectedId = next.id
-        if (!stay) screen = "log"
+        if (!focus) return
+        if (stay) selectedId = next.id else {
+            selectedId = null
+            screen = "log"
+        }
     }
 
     fun delete(id: String) {
@@ -258,85 +268,149 @@ fun HoldApp(
 ) {
     val controller = remember(repository) { HoldController(repository) }
     var fabOpen by remember { mutableStateOf(false) }
+    var askInk by remember { mutableStateOf(false) }
     LaunchedEffect(capture?.kind, capture?.text) {
         val request = capture ?: return@LaunchedEffect
         if (request.text.isBlank()) return@LaunchedEffect
         controller.filePhrase(request.kind, request.text)
     }
+    WatchCaptures(
+        onText = { kind, text -> controller.filePhrase(kind, text) },
+        onAudio = { bytes ->
+            val id = newId()
+            val now = nowMillis()
+            ports.saveBlob(id, bytes)
+            controller.save(
+                Entry(
+                    id = id,
+                    kind = "voice",
+                    title = "Voice",
+                    createdAt = now,
+                    updatedAt = now,
+                    deviceId = controller.snapshot.sync.deviceId,
+                    type = "audio",
+                    payload = Payload.Voice(hasAudio = true, mime = "audio/mp4"),
+                ),
+                focus = false,
+            )
+            controller.status = "Filed from the watch."
+        },
+    )
+    fun openSheet(action: String) {
+        fabOpen = false
+        controller.selectedId = null
+        controller.draft.clear()
+        when (action) {
+            "audio" -> controller.screen = "voice"
+            "ink" -> {
+                controller.draft.kind = "note"
+                controller.draft.medium = "ink"
+                controller.screen = "write"
+            }
+            "place" -> {
+                controller.draft.kind = "place"
+                controller.draft.medium = "text"
+                controller.screen = "write"
+            }
+            "radio" -> {
+                controller.draft.kind = "radio"
+                controller.draft.medium = "text"
+                controller.screen = "write"
+            }
+            else -> {
+                controller.draft.kind = "note"
+                controller.draft.medium = "text"
+                controller.screen = "write"
+            }
+        }
+    }
     HoldTheme {
         val selected = controller.selected()
-        val inkBleed = (selected?.medium() == "ink") || (selected == null && controller.screen == "write" && controller.draft.medium == "ink" && controller.draft.kind == "note")
-        val onLog = selected == null && controller.screen == "log"
-        Scaffold(
-            containerColor = HoldThemeColors.bg,
-            floatingActionButton = {
-                if (onLog) {
-                    HoldFab(fabOpen, { fabOpen = !fabOpen }) { action ->
-                        fabOpen = false
-                        controller.selectedId = null
-                        controller.draft.clear()
-                        when (action) {
-                            "audio" -> controller.screen = "voice"
-                            "ink" -> {
-                                controller.draft.kind = "note"
-                                controller.draft.medium = "ink"
-                                controller.screen = "write"
-                            }
-                            "place" -> {
-                                controller.draft.kind = "place"
-                                controller.draft.medium = "text"
-                                controller.screen = "write"
-                            }
-                            "radio" -> {
-                                controller.draft.kind = "radio"
-                                controller.draft.medium = "text"
-                                controller.screen = "write"
-                            }
-                            else -> {
-                                controller.draft.kind = "note"
-                                controller.draft.medium = "text"
-                                controller.screen = "write"
-                            }
+        val sheet = selected != null || controller.screen == "write" || controller.screen == "voice"
+        val onLog = !sheet && controller.screen == "log"
+        Box(Modifier.fillMaxSize()) {
+            Scaffold(
+                containerColor = HoldThemeColors.bg,
+                floatingActionButton = {
+                    if (onLog) {
+                        HoldFab(fabOpen, { fabOpen = !fabOpen }) { action ->
+                            if (action == "ink") askInk = true else openSheet(action)
                         }
                     }
-                }
-            },
-            bottomBar = {
-                NavigationBar(containerColor = HoldThemeColors.bg) {
-                    listOf("log" to ("Log" to Lucide.LogIcon), "library" to ("Library" to Lucide.Library)).forEach { (id, item) ->
-                        NavigationBarItem(
-                            selected = controller.screen == id && selected == null,
-                            onClick = {
-                                controller.selectedId = null
-                                controller.screen = id
-                                fabOpen = false
-                            },
-                            label = { Text(item.first) },
-                            icon = { Icon(item.second, item.first, tint = HoldThemeColors.fg) },
-                        )
+                },
+                bottomBar = {
+                    NavigationBar(containerColor = HoldThemeColors.bg) {
+                        listOf("log" to ("Log" to Lucide.LogIcon), "library" to ("Library" to Lucide.Library)).forEach { (id, item) ->
+                            NavigationBarItem(
+                                selected = controller.screen == id && !sheet,
+                                onClick = {
+                                    controller.selectedId = null
+                                    controller.screen = id
+                                    fabOpen = false
+                                },
+                                label = { Text(item.first) },
+                                icon = { Icon(item.second, item.first, tint = HoldThemeColors.fg) },
+                            )
+                        }
                     }
-                }
-            },
-        ) { padding ->
-            Column(Modifier.fillMaxSize().padding(padding)) {
-                Text(
-                    if (controller.snapshot.settings.mode == "thin") "HOLD · thin" else "HOLD",
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
-                )
-                if (controller.status.isNotBlank()) {
-                    Text(controller.status, color = HoldThemeColors.muted, modifier = Modifier.padding(horizontal = 16.dp))
-                }
-                Box(Modifier.weight(1f).padding(horizontal = if (inkBleed) 0.dp else 16.dp)) {
-                    when {
-                        selected != null -> DetailScreen(selected, controller, ports, poster, speech)
-                        controller.screen == "write" -> WriteScreen(controller, ports)
-                        controller.screen == "voice" -> VoiceScreen(controller, speech, ports)
-                        controller.screen == "library" -> LibraryScreen(controller, poster, ports)
-                        else -> LogScreen(controller, ports)
+                },
+            ) { padding ->
+                Column(Modifier.fillMaxSize().padding(padding)) {
+                    Text(
+                        if (controller.snapshot.settings.mode == "thin") "HOLD · thin" else "HOLD",
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
+                    )
+                    if (controller.status.isNotBlank()) {
+                        Text(controller.status, color = HoldThemeColors.muted, modifier = Modifier.padding(horizontal = 16.dp))
+                    }
+                    Box(Modifier.weight(1f).padding(horizontal = 16.dp)) {
+                        if (controller.screen == "library" && selected == null) LibraryScreen(controller, poster, ports)
+                        else LogScreen(controller, ports)
                     }
                 }
             }
+            if (sheet) {
+                EntrySheet(onDismiss = {
+                    controller.selectedId = null
+                    controller.draft.clear()
+                    if (controller.screen != "library") controller.screen = "log"
+                }) {
+                    when {
+                        selected != null -> DetailScreen(selected, controller, ports, poster, speech)
+                        controller.screen == "voice" -> VoiceScreen(controller, speech, ports)
+                        else -> WriteScreen(controller, ports)
+                    }
+                }
+            }
+        }
+        if (askInk) {
+            AlertDialog(
+                onDismissRequest = { askInk = false },
+                containerColor = HoldThemeColors.bg,
+                title = { Text("Ink") },
+                text = { Text("Start with a blank page, or draw on a photo.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        askInk = false
+                        openSheet("ink")
+                    }) { Text("Blank page") }
+                },
+                dismissButton = {
+                    Row {
+                        TextButton(onClick = {
+                            askInk = false
+                            openSheet("ink")
+                            controller.shotSource = "camera"
+                        }) { Text("Camera") }
+                        TextButton(onClick = {
+                            askInk = false
+                            openSheet("ink")
+                            controller.shotSource = "library"
+                        }) { Text("Library") }
+                    }
+                },
+            )
         }
     }
 }

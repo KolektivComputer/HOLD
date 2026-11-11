@@ -1,5 +1,5 @@
-# iOS
+# Apple
 
-The UI lives in `apps/compose` (`iosMain`). Gradle builds a static framework named `HoldApp`.
+Open [HOLD.xcodeproj](../apple/HOLD.xcodeproj) on a Mac. The iPhone target builds the Compose framework and hosts it. The Watch target is a companion for a quick note or a voice catch, sent to the phone over WatchConnectivity.
 
-In Xcode, add that framework and call `MainViewController()` from the app delegate. Open the project on a Mac. This checkout doesn't include an `.xcodeproj` yet.
+Select your team, then run HOLD on the phone and HOLD Watch on the watch.
