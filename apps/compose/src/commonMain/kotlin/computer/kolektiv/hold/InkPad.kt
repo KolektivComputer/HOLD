@@ -17,8 +17,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Slider
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.runtime.key
 import computer.kolektiv.hold.model.Palette
 import kotlin.math.max
 import kotlin.math.min
@@ -115,6 +119,10 @@ fun InkEditor(
     var current by remember { mutableStateOf(strokes) }
     var toolsOpen by remember { mutableStateOf(false) }
     var infoOpen by remember { mutableStateOf(false) }
+    var colorsOpen by remember { mutableStateOf(false) }
+    var bankOpen by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf(0) }
+    var editing by remember { mutableStateOf<Int?>(null) }
     fun commit(next: List<InkStroke>) {
         past = past + listOf(current)
         current = next
@@ -183,13 +191,66 @@ fun InkEditor(
                     OutlinedTextField(title, onTitle, label = { Text("Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                     LocateRow(locate, onLocate)
                     TagEditor(tagIds, tags, onTags, onCreateTag)
-                    ColorDeck(color, colors, palettes, onColor, onSavePalette, onUsePalette)
+                }
+            }
+            if (colorsOpen) {
+                if (bankOpen) {
+                    PaletteBank(
+                        palettes = palettes,
+                        colors = colors,
+                        onUse = {
+                            onUsePalette(it)
+                            selected = 0
+                            editing = null
+                            it.firstOrNull()?.let(onColor)
+                            bankOpen = false
+                        },
+                        onSave = { name, stored ->
+                            onSavePalette(name, stored)
+                            bankOpen = false
+                        },
+                        onClose = { bankOpen = false },
+                    )
+                } else {
+                    val edit = editing
+                    if (edit != null && edit in colors.indices) {
+                        key(edit) {
+                            ColorPicker(colors[edit]) { next ->
+                                val updated = colors.toMutableList()
+                                updated[edit] = next
+                                onUsePalette(updated)
+                                onColor(next)
+                            }
+                        }
+                    }
+                    PaletteWheel(
+                        colors = colors,
+                        selected = selected.coerceIn(0, (colors.size - 1).coerceAtLeast(0)),
+                        onSelect = { index ->
+                            selected = index
+                            editing = null
+                            onColor(colors[index])
+                        },
+                        onEdit = { editing = it },
+                        onAdd = {
+                            val updated = colors + "#ebe6d6"
+                            onUsePalette(updated)
+                            selected = updated.lastIndex
+                            editing = updated.lastIndex
+                            onColor(updated.last())
+                        },
+                        onOpenBank = { bankOpen = true },
+                    )
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 IconButton(onClick = {
                     toolsOpen = !toolsOpen
-                    if (toolsOpen) infoOpen = false
+                    if (toolsOpen) {
+                        infoOpen = false
+                        colorsOpen = false
+                        editing = null
+                    }
                 }) { Icon(toolIcon(tool), "Tools", tint = HoldThemeColors.fg) }
                 Box(
                     Modifier
@@ -198,13 +259,23 @@ fun InkEditor(
                         .background(inkColor(color))
                         .border(2.dp, HoldThemeColors.fg, CircleShape)
                         .clickable {
-                            infoOpen = !infoOpen
-                            if (infoOpen) toolsOpen = false
+                            colorsOpen = !colorsOpen
+                            if (colorsOpen) {
+                                infoOpen = false
+                                toolsOpen = false
+                                bankOpen = false
+                                editing = null
+                                selected = colors.indexOfFirst { it.equals(color, true) }.coerceAtLeast(0)
+                            }
                         },
                 )
                 IconButton(onClick = {
                     infoOpen = !infoOpen
-                    if (infoOpen) toolsOpen = false
+                    if (infoOpen) {
+                        toolsOpen = false
+                        colorsOpen = false
+                        editing = null
+                    }
                 }) { Icon(HoldIcons.Tags, "Info", tint = HoldThemeColors.fg) }
                 Text(tool, color = HoldThemeColors.muted)
             }
@@ -221,80 +292,199 @@ fun LocateRow(checked: Boolean, onChecked: (Boolean) -> Unit) {
 }
 
 @Composable
-private fun ColorDeck(
-    color: String,
-    swatches: List<String>,
-    palettes: List<Palette>,
-    onColor: (String) -> Unit,
-    onSavePalette: (String, List<String>) -> Unit,
-    onUsePalette: (List<String>) -> Unit,
+private fun PaletteWheel(
+    colors: List<String>,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+    onEdit: (Int) -> Unit,
+    onAdd: () -> Unit,
+    onOpenBank: () -> Unit,
 ) {
-    val start = remember { hsvOf(color) }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            colors.forEachIndexed { index, swatch ->
+                val on = index == selected
+                Box(
+                    Modifier
+                        .size(if (on) 34.dp else 28.dp)
+                        .clip(CircleShape)
+                        .background(inkColor(swatch))
+                        .border(if (on) 2.dp else 0.dp, HoldThemeColors.fg, CircleShape)
+                        .clickable { if (on) onEdit(index) else onSelect(index) },
+                )
+            }
+            Box(
+                Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .border(1.dp, HoldThemeColors.muted, CircleShape)
+                    .clickable(onClick = onAdd),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(HoldIcons.Plus, "Add color", tint = HoldThemeColors.muted, modifier = Modifier.size(14.dp))
+            }
+        }
+        IconButton(onClick = onOpenBank, modifier = Modifier.size(32.dp)) {
+            Icon(HoldIcons.Palette, "Palettes", tint = HoldThemeColors.muted.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+@Composable
+private fun ColorPicker(hex: String, onHex: (String) -> Unit) {
+    val start = remember { hsvOf(hex) }
     var hue by remember { mutableStateOf(start.first) }
     var sat by remember { mutableStateOf(start.second) }
     var value by remember { mutableStateOf(start.third) }
-    var paletteName by remember { mutableStateOf("") }
-    fun push(nextHue: Float = hue, nextSat: Float = sat, nextValue: Float = value) {
+    var field by remember { mutableStateOf(hex) }
+    val hueNow = rememberUpdatedState(hue)
+    val satNow = rememberUpdatedState(sat)
+    val valueNow = rememberUpdatedState(value)
+    fun emit(nextHue: Float, nextSat: Float, nextValue: Float) {
         hue = nextHue
         sat = nextSat
         value = nextValue
-        onColor(colorHex(Color.hsv(nextHue, nextSat, nextValue)))
+        val next = colorHex(Color.hsv(nextHue, nextSat, nextValue))
+        field = next
+        onHex(next)
     }
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("Color", color = HoldThemeColors.muted)
-        Slider(hue, { push(nextHue = it) }, valueRange = 0f..360f)
-        Slider(sat, { push(nextSat = it) })
-        Slider(value, { push(nextValue = it) })
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            swatches.forEach { swatch ->
-                Box(
-                    Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(inkColor(swatch))
-                        .border(if (swatch.equals(color, true)) 2.dp else 0.dp, HoldThemeColors.accent, CircleShape)
-                        .clickable {
-                            val hsv = hsvOf(swatch)
-                            push(hsv.first, hsv.second, hsv.third)
-                        },
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(140.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown()
+                        fun apply(offset: Offset) {
+                            emit(
+                                hueNow.value,
+                                (offset.x / size.width).coerceIn(0f, 1f),
+                                1f - (offset.y / size.height).coerceIn(0f, 1f),
+                            )
+                        }
+                        apply(down.position)
+                        down.consume()
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull() ?: break
+                            if (!change.pressed) break
+                            apply(change.position)
+                            change.consume()
+                        }
+                    }
+                },
+        ) {
+            Canvas(Modifier.fillMaxSize()) {
+                drawRect(Brush.horizontalGradient(listOf(Color.White, Color.hsv(hue, 1f, 1f))))
+                drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black)))
+                val center = Offset(sat * size.width, (1f - value) * size.height)
+                drawCircle(Color.White, radius = 9.dp.toPx(), center = center, style = Stroke(width = 2.dp.toPx()))
+                drawCircle(inkColor(colorHex(Color.hsv(hue, sat, value))), radius = 6.dp.toPx(), center = center)
+            }
+        }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(28.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown()
+                        fun at(x: Float) = emit((x / size.width).coerceIn(0f, 1f) * 360f, satNow.value, valueNow.value)
+                        at(down.position.x)
+                        down.consume()
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull() ?: break
+                            if (!change.pressed) break
+                            at(change.position.x)
+                            change.consume()
+                        }
+                    }
+                },
+        ) {
+            Canvas(Modifier.fillMaxSize()) {
+                drawRect(
+                    Brush.horizontalGradient(
+                        listOf(0f, 60f, 120f, 180f, 240f, 300f, 360f).map { Color.hsv(it, 1f, 1f) },
+                    ),
                 )
+                val center = Offset((hue / 360f) * size.width, size.height / 2f)
+                drawCircle(Color.White, radius = 8.dp.toPx(), center = center, style = Stroke(width = 2.dp.toPx()))
+                drawCircle(Color.hsv(hue, 1f, 1f), radius = 5.dp.toPx(), center = center)
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                field,
+                { raw ->
+                    field = raw
+                    val clean = raw.removePrefix("#")
+                    if (clean.length == 6 && clean.all { it.digitToIntOrNull(16) != null }) {
+                        val parsed = hsvOf("#$clean")
+                        hue = parsed.first
+                        sat = parsed.second
+                        value = parsed.third
+                        onHex("#$clean".lowercase())
+                    }
+                },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+            )
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(inkColor(field)),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PaletteBank(
+    palettes: List<Palette>,
+    colors: List<String>,
+    onUse: (List<String>) -> Unit,
+    onSave: (String, List<String>) -> Unit,
+    onClose: () -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf("") }
+    val live = palettes.filter { it.deletedAt == null && (query.isBlank() || it.name.contains(query, ignoreCase = true)) }
+    Column(Modifier.heightIn(max = 320.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Palette bank", color = HoldThemeColors.fg, modifier = Modifier.weight(1f))
+            IconButton(onClick = onClose) { Icon(HoldIcons.X, "Close", tint = HoldThemeColors.muted) }
+        }
+        OutlinedTextField(query, { query = it }, label = { Text("Search") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        Column(Modifier.heightIn(max = 140.dp).verticalScroll(rememberScrollState())) {
+            if (live.isEmpty()) Text("Nothing saved under that name.", color = HoldThemeColors.muted)
+            live.forEach { palette ->
+                TextButton(onClick = { onUse(palette.colors) }, modifier = Modifier.fillMaxWidth()) {
+                    Text(palette.name, modifier = Modifier.fillMaxWidth())
+                }
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
-                paletteName,
-                { paletteName = it },
-                label = { Text("Palette name") },
+                name,
+                { name = it },
+                label = { Text("Name this palette") },
                 modifier = Modifier.weight(1f),
                 singleLine = true,
             )
             TextButton(onClick = {
-                if (paletteName.isBlank()) return@TextButton
-                onSavePalette(paletteName, (swatches + color).distinct())
-                paletteName = ""
+                if (name.isBlank() || colors.isEmpty()) return@TextButton
+                onSave(name, colors)
+                name = ""
             }) { Text("Save") }
-        }
-        val saved = palettes.filter { it.deletedAt == null }
-        if (saved.isNotEmpty()) {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                saved.forEach { palette ->
-                    Text(
-                        palette.name,
-                        color = HoldThemeColors.fg,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(HoldThemeColors.fg.copy(alpha = 0.12f))
-                            .clickable {
-                                palette.colors.firstOrNull()?.let { swatch ->
-                                    val hsv = hsvOf(swatch)
-                                    push(hsv.first, hsv.second, hsv.third)
-                                }
-                                onUsePalette(palette.colors)
-                            }
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                    )
-                }
-            }
         }
     }
 }
