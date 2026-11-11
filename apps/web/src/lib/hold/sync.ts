@@ -1,14 +1,19 @@
+import { plusCode } from "./geo.ts";
+import { sanitizeInk } from "./ink.ts";
 import { applyRemote, outbound } from "./merge.ts";
 import {
   KINDS,
   RADIO_PROTOCOLS,
+  SPOT_KINDS,
   type Category,
+  type ContactHandle,
   type Entry,
   type Kind,
   type Payload,
   type RadioProtocol,
   type SavedView,
   type Snapshot,
+  type SpotKind,
   type SyncConfig,
   type Tag,
 } from "./types.ts";
@@ -60,11 +65,36 @@ function isProtocol(value: unknown): value is RadioProtocol {
   return typeof value === "string" && (RADIO_PROTOCOLS as readonly string[]).includes(value);
 }
 
+function isSpot(value: unknown): value is SpotKind {
+  return typeof value === "string" && (SPOT_KINDS as readonly string[]).includes(value);
+}
+
+function handlesFrom(value: unknown): ContactHandle[] {
+  if (!Array.isArray(value)) return [];
+  const handles: ContactHandle[] = [];
+  for (const item of value) {
+    if (!isRecord(item) || !isSpot(item.kind) || typeof item.value !== "string") continue;
+    const trimmed = item.value.trim();
+    if (!trimmed) continue;
+    handles.push({ kind: item.kind, value: trimmed.slice(0, 200) });
+    if (handles.length >= 24) break;
+  }
+  return handles;
+}
+
+function finite(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function payloadFrom(kind: Kind, value: unknown): Payload | null {
   const row = isRecord(value) ? value : {};
   switch (kind) {
     case "note":
-      return { kind: "note" };
+      return {
+        kind: "note",
+        ink: sanitizeInk(row.ink),
+        ...(typeof row.shotId === "string" && row.shotId ? { shotId: row.shotId } : {}),
+      };
     case "number":
       return { kind: "number", phone: typeof row.phone === "string" ? row.phone : "" };
     case "voice":
@@ -80,7 +110,7 @@ function payloadFrom(kind: Kind, value: unknown): Payload | null {
         kind: "radio",
         protocol: isProtocol(row.protocol) ? row.protocol : "other",
         uid: typeof row.uid === "string" ? row.uid : "",
-        frequencyHz: typeof row.frequencyHz === "number" ? row.frequencyHz : null,
+        frequencyHz: finite(row.frequencyHz),
         filetype: typeof row.filetype === "string" ? row.filetype : "",
         raw: typeof row.raw === "string" ? row.raw : "",
       };
@@ -96,12 +126,21 @@ function payloadFrom(kind: Kind, value: unknown): Payload | null {
         recordedAt: typeof row.recordedAt === "number" ? row.recordedAt : Date.now(),
       };
     }
-    case "place":
+    case "place": {
+      const lat = finite(row.lat);
+      const lon = finite(row.lon);
       return {
         kind: "place",
-        lat: typeof row.lat === "number" ? row.lat : null,
-        lon: typeof row.lon === "number" ? row.lon : null,
+        lat,
+        lon,
+        accuracyM: finite(row.accuracyM),
+        plus: lat != null && lon != null ? (typeof row.plus === "string" && row.plus ? row.plus : plusCode(lat, lon)) : "",
+        address: typeof row.address === "string" ? row.address : "",
+        w3w: typeof row.w3w === "string" ? row.w3w : "",
       };
+    }
+    case "contact":
+      return { kind: "contact", handles: handlesFrom(row.handles) };
   }
 }
 
@@ -112,6 +151,9 @@ function entryFrom(value: unknown, now: number, previous?: Entry): Entry | null 
   if (payload.kind === "voice" && previous?.payload.kind === "voice" && previous.payload.hasAudio) {
     payload.hasAudio = true;
     payload.mime = previous.payload.mime || payload.mime;
+  }
+  if (payload.kind === "note" && previous?.payload.kind === "note" && previous.payload.shotId && !payload.shotId) {
+    payload.shotId = previous.payload.shotId;
   }
   return {
     ...stampFrom(value, now),
@@ -151,133 +193,79 @@ function ids(value: unknown): string[] {
   return value.filter((id) => typeof id === "string");
 }
 
+function settle<T extends { id: string; dirty: boolean; syncedAt: number | null; deletedAt: number | null; updatedAt: number }>(
+  local: T[],
+  sent: ReturnType<typeof outbound<T>>,
+  incoming: T[],
+  deletedIds: string[],
+  now: number,
+): T[] {
+  const kept = local.filter((item) => !sent.dropLocal.includes(item.id));
+  const merged = applyRemote(kept, incoming, [...deletedIds, ...sent.deleted]).next;
+  const liveIds = new Set(sent.live.map((item) => item.id));
+  return merged.map((item) => (liveIds.has(item.id) && item.dirty ? { ...item, dirty: false, syncedAt: now } : item));
+}
+
 export async function pushSync(snapshot: Snapshot): Promise<SyncResult> {
   const { sync } = snapshot;
   if (!sync.baseUrl.trim()) throw new Error("Set a server address first.");
   const endpoint = syncEndpoint(sync.baseUrl);
   const now = Date.now();
-  const sentEntries = outbound(snapshot.entries);
-  const sentCategories = outbound(snapshot.categories);
-  const sentTags = outbound(snapshot.tags);
-  const sentViews = outbound(snapshot.views);
-
-  const body = {
-    deviceId: sync.deviceId,
-    deviceName: sync.deviceName,
-    since: sync.lastCursor,
-    categories: sentCategories.live.map(toWire),
-    tags: sentTags.live.map(toWire),
-    views: sentViews.live.map(toWire),
-    upserts: sentEntries.live.map(toWire),
-    deleted: [...sentEntries.deleted, ...sentCategories.deleted, ...sentTags.deleted, ...sentViews.deleted],
-  };
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15_000);
+  const entries = outbound(snapshot.entries);
+  const categories = outbound(snapshot.categories);
+  const tags = outbound(snapshot.tags);
+  const views = outbound(snapshot.views);
   let response: Response;
   try {
     response = await fetch(endpoint, {
       method: "POST",
       headers: {
-        accept: "application/json",
-        "content-type": "application/json",
-        ...(sync.token.trim() ? { authorization: `Bearer ${sync.token.trim()}` } : {}),
+        "Content-Type": "application/json",
+        ...(sync.token.trim() ? { Authorization: `Bearer ${sync.token.trim()}` } : {}),
       },
-      body: JSON.stringify(body),
-      signal: controller.signal,
+      body: JSON.stringify({
+        deviceId: sync.deviceId,
+        deviceName: sync.deviceName,
+        since: sync.lastCursor,
+        categories: categories.live.map(toWire),
+        tags: tags.live.map(toWire),
+        views: views.live.map(toWire),
+        upserts: entries.live.map(toWire),
+        deleted: [...entries.deleted, ...categories.deleted, ...tags.deleted, ...views.deleted],
+      }),
     });
   } catch {
-    throw new Error("Could not reach the server. Stay offline — the log is still here.");
-  } finally {
-    clearTimeout(timer);
+    throw new Error("Could not reach the server.");
   }
-  if (!response.ok) throw new Error(`The server answered ${response.status}.`);
-  const data = (await response.json()) as unknown;
-  if (!isRecord(data) || typeof data.cursor !== "string" || !data.cursor) {
-    throw new Error("The server reply had no cursor.");
+  if (!response.ok) {
+    throw new Error(response.status === 401 || response.status === 403 ? "The server refused the token." : `The server answered ${response.status}.`);
   }
-
-  const skipped = { n: 0 };
-  const take = <T>(value: unknown, map: (item: unknown) => T | null): T[] => {
-    if (!Array.isArray(value)) return [];
-    const out: T[] = [];
-    for (const item of value) {
-      const parsed = map(item);
-      if (parsed) out.push(parsed);
-      else skipped.n += 1;
-    }
-    return out;
-  };
-
-  const localEntries = new Map(snapshot.entries.map((entry) => [entry.id, entry]));
-  const incomingEntries = take(data.upserts, (item) => {
-    const id = isRecord(item) && typeof item.id === "string" ? item.id : "";
-    return entryFrom(item, now, localEntries.get(id));
-  });
-  const incomingCategories = take(data.categories, (item) => namedFrom(item, now));
-  const incomingTags = take(data.tags, (item) => namedFrom(item, now));
-  const incomingViews = take(data.views, (item) => viewFrom(item, now));
-  const deleted = ids(data.deleted);
-
-  const entriesMerged = applyRemote(snapshot.entries, incomingEntries, [
-    ...deleted,
-    ...sentEntries.deleted,
-    ...sentEntries.dropLocal,
-  ]);
-  const categoriesMerged = applyRemote(snapshot.categories, incomingCategories, [
-    ...deleted,
-    ...sentCategories.deleted,
-    ...sentCategories.dropLocal,
-  ]);
-  const tagsMerged = applyRemote(snapshot.tags, incomingTags, [...deleted, ...sentTags.deleted, ...sentTags.dropLocal]);
-  const viewsMerged = applyRemote(snapshot.views, incomingViews, [
-    ...deleted,
-    ...sentViews.deleted,
-    ...sentViews.dropLocal,
-  ]);
-
-  const sentAt = new Map(sentEntries.live.map((entry) => [entry.id, entry.updatedAt]));
-  const entries = entriesMerged.next.map((entry) => {
-    const pushedAt = sentAt.get(entry.id);
-    if (pushedAt !== undefined && entry.updatedAt === pushedAt) {
-      return { ...entry, dirty: false, syncedAt: now };
-    }
-    return entry;
-  });
-  const markClean = <T extends { id: string; updatedAt: number; dirty: boolean; syncedAt: number | null }>(
-    items: T[],
-    sent: { id: string; updatedAt: number }[],
-  ) => {
-    const times = new Map(sent.map((item) => [item.id, item.updatedAt]));
-    return items.map((item) => {
-      const pushedAt = times.get(item.id);
-      if (pushedAt !== undefined && item.updatedAt === pushedAt) {
-        return { ...item, dirty: false, syncedAt: now };
-      }
-      return item;
-    });
-  };
-
-  const nextSync: SyncConfig = {
-    ...sync,
-    lastCursor: data.cursor,
-    lastSyncAt: now,
-    lastError: null,
-  };
-  const summary = [
-    `Sent ${sentEntries.live.length}. Received ${incomingEntries.length}.`,
-    skipped.n > 0 ? `Skipped ${skipped.n} the server shaped unexpectedly.` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
+  const json: unknown = await response.json();
+  if (!isRecord(json)) throw new Error("The server sent something this pocket doesn't understand.");
+  const byId = new Map(snapshot.entries.map((entry) => [entry.id, entry]));
+  const incomingEntries = Array.isArray(json.upserts)
+    ? json.upserts
+        .map((item) => entryFrom(item, now, isRecord(item) && typeof item.id === "string" ? byId.get(item.id) : undefined))
+        .filter((item): item is Entry => item !== null)
+    : [];
+  const incomingCategories = Array.isArray(json.categories)
+    ? json.categories.map((item) => namedFrom(item, now)).filter((item): item is Category => item !== null)
+    : [];
+  const incomingTags = Array.isArray(json.tags) ? json.tags.map((item) => namedFrom(item, now)).filter((item): item is Tag => item !== null) : [];
+  const incomingViews = Array.isArray(json.views)
+    ? json.views.map((item) => viewFrom(item, now)).filter((item): item is SavedView => item !== null)
+    : [];
+  const deleted = ids(json.deleted);
+  const cursor = typeof json.cursor === "string" ? json.cursor : sync.lastCursor;
+  const nextSync: SyncConfig = { ...sync, lastCursor: cursor, lastSyncAt: now, lastError: null };
+  const arrived = incomingEntries.length + deleted.length;
   return {
-    summary,
+    summary: arrived > 0 ? `Synced. ${arrived} from the server.` : "Synced. The server had nothing new.",
     snapshot: {
-      entries,
-      categories: markClean(categoriesMerged.next, sentCategories.live),
-      tags: markClean(tagsMerged.next, sentTags.live),
-      views: markClean(viewsMerged.next, sentViews.live),
+      entries: settle(snapshot.entries, entries, incomingEntries, deleted, now),
+      categories: settle(snapshot.categories, categories, incomingCategories, deleted, now),
+      tags: settle(snapshot.tags, tags, incomingTags, deleted, now),
+      views: settle(snapshot.views, views, incomingViews, deleted, now),
       sync: nextSync,
     },
   };

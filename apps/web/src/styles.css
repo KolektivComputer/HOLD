@@ -67,6 +67,12 @@
   .chip-row::-webkit-scrollbar {
     display: none;
   }
+
+  .ink-page {
+    aspect-ratio: 5 / 7;
+    touch-action: none;
+    background: var(--color-fg);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

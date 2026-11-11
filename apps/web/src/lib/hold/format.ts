@@ -1,4 +1,4 @@
-import type { Category, Entry, Kind, LogFilter, RadioProtocol, Tag } from "./types.ts";
+import type { Category, Entry, Kind, LogFilter, RadioProtocol, SpotKind, Tag } from "./types.ts";
 
 export const KIND_LABEL: Record<Kind, string> = {
   note: "Note",
@@ -7,6 +7,16 @@ export const KIND_LABEL: Record<Kind, string> = {
   radio: "Radio",
   health: "Health",
   place: "Place",
+  contact: "Contact",
+};
+
+export const SPOT_LABEL: Record<SpotKind, string> = {
+  phone: "Phone",
+  email: "Email",
+  discord: "Discord",
+  x: "X",
+  fluxer: "Fluxer",
+  address: "Address",
 };
 
 export const PROTOCOL_LABEL: Record<RadioProtocol, string> = {
@@ -57,12 +67,21 @@ export function entryPreview(entry: Entry): string {
     case "health":
       return [entry.payload.value, entry.payload.unit].filter((part) => part !== "").join(" ");
     case "place":
+      if (entry.payload.plus) return entry.payload.plus;
+      if (entry.payload.address) return entry.payload.address;
       if (entry.payload.lat != null && entry.payload.lon != null) {
-        return `${entry.payload.lat.toFixed(4)}, ${entry.payload.lon.toFixed(4)}`;
+        return `${entry.payload.lat.toFixed(5)}, ${entry.payload.lon.toFixed(5)}`;
       }
       return entry.body;
-    case "note":
-      return entry.body;
+    case "contact":
+      return entry.payload.handles.map((handle) => handle.value).join(" · ");
+    case "note": {
+      if (entry.body.trim()) return entry.body;
+      const strokes = entry.payload.ink?.length ?? 0;
+      if (strokes === 1) return "Ink · 1 stroke";
+      if (strokes > 1) return `Ink · ${strokes} strokes`;
+      return "";
+    }
   }
 }
 
@@ -77,7 +96,9 @@ function payloadSearch(entry: Entry): string {
     case "health":
       return `${entry.payload.metric} ${entry.payload.value} ${entry.payload.unit}`;
     case "place":
-      return `${entry.payload.lat ?? ""} ${entry.payload.lon ?? ""}`;
+      return `${entry.payload.plus} ${entry.payload.address} ${entry.payload.w3w} ${entry.payload.lat ?? ""} ${entry.payload.lon ?? ""}`;
+    case "contact":
+      return entry.payload.handles.map((handle) => `${handle.kind} ${handle.value}`).join(" ");
     case "note":
       return "";
   }

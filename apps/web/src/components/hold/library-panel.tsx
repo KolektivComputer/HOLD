@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, TextField } from "@/components/hold/ui";
+import { SlippyMap } from "@/components/hold/slippy-map";
 import { downloadBlob } from "@/lib/hold/format";
 import { useHold } from "@/lib/hold/store";
-import { KINDS, type Category, type Entry, type LogFilter, type SavedView, type Tag } from "@/lib/hold/types";
+import { KINDS, newId, type Category, type Entry, type LogFilter, type SavedView, type Tag } from "@/lib/hold/types";
 
 type Bundle = {
   version: 1;
@@ -61,6 +62,8 @@ export function LibraryPanel({
   const [includeAudio, setIncludeAudio] = useState(false);
   const [backupNote, setBackupNote] = useState("");
   const [confirmWipe, setConfirmWipe] = useState(false);
+  const [keyDraft, setKeyDraft] = useState(hold.settings.deepseekKey);
+  const [packNote, setPackNote] = useState("");
   const categories = hold.categories.filter((category) => !category.deletedAt);
   const tags = hold.tags.filter((tag) => !tag.deletedAt);
   const views = hold.views.filter((view) => !view.deletedAt);
@@ -120,6 +123,7 @@ export function LibraryPanel({
 
   return (
     <div className="flex flex-col gap-8 px-4 py-4">
+      <PocketSection keyDraft={keyDraft} onKey={setKeyDraft} packNote={packNote} onPackNote={setPackNote} />
       <section className="flex flex-col gap-3">
         <h2 className="font-mono text-xs tracking-wider text-muted uppercase">Views</h2>
         <p className="text-sm text-muted">Current log filters: {filterSummary}</p>
@@ -258,7 +262,9 @@ export function LibraryPanel({
       <section className="flex flex-col gap-3">
         <h2 className="font-mono text-xs tracking-wider text-muted uppercase">Sync</h2>
         <p className="text-sm text-muted">
-          Nothing leaves this device until you sync. Point it at your own server on the WireGuard net. The browser will need that server to allow this site.
+          {hold.settings.mode === "thin"
+            ? "Thin pocket. Nothing calls your server, and the trail does not follow you, until you ask."
+            : "Full pocket. Sync still waits for the button. Follow me only runs if you turn it on."}
         </p>
         <TextField label="Server" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://hold.home" inputMode="url" autoComplete="off" />
         <TextField label="Token" value={token} onChange={(event) => setToken(event.target.value)} type="password" autoComplete="off" />
@@ -350,6 +356,123 @@ Reply:
         )}
       </section>
     </div>
+  );
+}
+
+function PocketSection({
+  keyDraft,
+  onKey,
+  packNote,
+  onPackNote,
+}: {
+  keyDraft: string;
+  onKey: (value: string) => void;
+  packNote: string;
+  onPackNote: (value: string) => void;
+}) {
+  const hold = useHold();
+  const places = hold.entries.filter((entry) => !entry.deletedAt && entry.payload.kind === "place" && entry.payload.lat != null && entry.payload.lon != null);
+  const first = places[0]?.payload.kind === "place" ? places[0].payload : null;
+  const center = hold.trail[hold.trail.length - 1] ?? (first && first.lat != null && first.lon != null ? { lat: first.lat, lon: first.lon } : null);
+
+  useEffect(() => {
+    if (hold.settings.mode !== "full" || !hold.settings.follow || !navigator.geolocation) return;
+    const watch = navigator.geolocation.watchPosition((position) => {
+      void hold.dropFix({
+        id: newId(),
+        at: Date.now(),
+        lat: position.coords.latitude,
+        lon: position.coords.longitude,
+        accuracyM: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null,
+      });
+    });
+    return () => navigator.geolocation.clearWatch(watch);
+  }, [hold.settings.mode, hold.settings.follow, hold]);
+
+  const packTrail = () => {
+    const blob = new Blob(
+      [JSON.stringify({ trail: hold.trail, places: places.map((entry) => ({ title: entry.title, payload: entry.payload })) }, null, 2)],
+      { type: "application/json" },
+    );
+    downloadBlob("hold-trail.json", blob);
+    onPackNote("Trail packed. Hand the file to someone you trust. A live encrypted send between pockets is not in this build.");
+  };
+
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="font-mono text-xs tracking-wider text-muted uppercase">Pocket</h2>
+      <p className="text-sm text-muted">
+        Full is for the phone that syncs to your own server. Thin is for the Stylo: offline, and the server only when you tap Sync.
+      </p>
+      <div className="flex gap-2">
+        <Button tone={hold.settings.mode === "full" ? "accent" : "plain"} onClick={() => void hold.setSettings({ mode: "full" })}>
+          Full
+        </Button>
+        <Button tone={hold.settings.mode === "thin" ? "accent" : "plain"} onClick={() => void hold.setSettings({ mode: "thin", follow: false })}>
+          Thin
+        </Button>
+      </div>
+      <p className="text-sm text-muted">Passwords, one-time codes, and passkeys stay out until there is a vault. Direct send over Bluetooth or the cell net stays out too.</p>
+      {center ? (
+        <SlippyMap
+          lat={center.lat}
+          lon={center.lon}
+          pins={[
+            ...places.flatMap((entry) =>
+              entry.payload.kind === "place" && entry.payload.lat != null && entry.payload.lon != null
+                ? [{ lat: entry.payload.lat, lon: entry.payload.lon, label: entry.title }]
+                : [],
+            ),
+            ...hold.trail.map((fix) => ({ lat: fix.lat, lon: fix.lon, label: "Trail" })),
+          ]}
+        />
+      ) : (
+        <p className="text-sm text-muted">No ground yet. File a place, or drop a pin.</p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          onClick={() => {
+            if (!navigator.geolocation) return;
+            navigator.geolocation.getCurrentPosition((position) => {
+              void hold.dropFix({
+                id: newId(),
+                at: Date.now(),
+                lat: position.coords.latitude,
+                lon: position.coords.longitude,
+                accuracyM: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null,
+              });
+            });
+          }}
+        >
+          Drop a pin
+        </Button>
+        <Button
+          tone={hold.settings.follow ? "accent" : "plain"}
+          disabled={hold.settings.mode === "thin"}
+          onClick={() => void hold.setSettings({ follow: !hold.settings.follow })}
+        >
+          {hold.settings.follow ? "Following" : "Follow me"}
+        </Button>
+        <Button tone="quiet" onClick={() => void hold.clearTrail()}>
+          Clear trail
+        </Button>
+        <Button onClick={packTrail} disabled={hold.trail.length === 0 && places.length === 0}>
+          Pack trail
+        </Button>
+      </div>
+      {hold.settings.mode === "thin" ? <p className="text-sm text-muted">Thin mode does not follow you. Drop a pin when you want one.</p> : null}
+      {packNote ? <p className="text-sm text-fg">{packNote}</p> : null}
+      <TextField label="DeepSeek key" value={keyDraft} onChange={(event) => onKey(event.target.value)} type="password" autoComplete="off" />
+      <Button
+        onClick={() => {
+          void hold.setSettings({ deepseekKey: keyDraft.trim() });
+          onPackNote("Key saved on this device only. It is not in backups or sync.");
+        }}
+      >
+        Save key
+      </Button>
+      <p className="text-sm text-muted">Used only when you tap Read with DeepSeek. deepseek-flash can see a picture. The on-device reader does not need a key.</p>
+    </section>
   );
 }
 

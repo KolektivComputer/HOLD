@@ -1,14 +1,18 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Kv } from "./db.ts";
 import { openKv } from "./db.ts";
-import { buildSeed, SEED_IDS } from "./seed.ts";
+import { haversineMeters } from "./geo.ts";
+import { buildSeed, isExampleSet, SEED_CATEGORY_IDS, SEED_IDS, SEED_TAG_IDS, SEED_VIEW_IDS } from "./seed.ts";
 import { pushSync } from "./sync.ts";
 import {
+  defaultSettings,
   defaultSync,
   newId,
   type Category,
   type Entry,
+  type Fix,
   type HealthDraft,
+  type PocketSettings,
   type SavedView,
   type Snapshot,
   type SyncConfig,
@@ -16,16 +20,20 @@ import {
 } from "./types.ts";
 
 type Flags = { seeded: boolean; dismissedIntro: boolean };
+type Desk = Snapshot & { settings: PocketSettings; trail: Fix[] };
 
-type HoldApi = Snapshot & {
+type HoldApi = Desk & {
   ready: boolean;
   persisted: boolean;
   problem: string | null;
   showIntro: boolean;
+  examples: boolean;
   saveEntry: (entry: Entry) => Promise<void>;
   removeEntry: (id: string) => Promise<void>;
   saveAudio: (id: string, blob: Blob) => Promise<void>;
   loadAudio: (id: string) => Promise<Blob | undefined>;
+  saveBlob: (id: string, blob: Blob) => Promise<void>;
+  loadBlob: (id: string) => Promise<Blob | undefined>;
   ensureCategory: (name: string) => Promise<string | null>;
   renameCategory: (id: string, name: string) => Promise<void>;
   removeCategory: (id: string) => Promise<void>;
@@ -35,6 +43,10 @@ type HoldApi = Snapshot & {
   saveView: (name: string, view: Pick<SavedView, "kinds" | "tagIds" | "categoryId" | "query">) => Promise<void>;
   removeView: (id: string) => Promise<void>;
   setSync: (patch: Partial<Omit<SyncConfig, "deviceId">>) => Promise<void>;
+  setSettings: (patch: Partial<PocketSettings>) => Promise<void>;
+  dropFix: (fix: Fix) => Promise<void>;
+  clearTrail: () => Promise<void>;
+  clearExamples: () => Promise<void>;
   dismissIntro: () => Promise<void>;
   runSync: () => Promise<string>;
   importEntries: (entries: Entry[]) => Promise<number>;
@@ -44,6 +56,35 @@ type HoldApi = Snapshot & {
 };
 
 const HoldContext = createContext<HoldApi | null>(null);
+
+function normalizeSettings(value: PocketSettings | undefined): PocketSettings {
+  const base = defaultSettings();
+  if (!value) return base;
+  const mode = value.mode === "thin" ? "thin" : "full";
+  return {
+    mode,
+    follow: mode === "full" && value.follow === true,
+    deepseekKey: typeof value.deepseekKey === "string" ? value.deepseekKey : "",
+  };
+}
+
+function normalizeTrail(value: unknown): Fix[] {
+  if (!Array.isArray(value)) return [];
+  const fixes: Fix[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Partial<Fix>;
+    if (typeof row.lat !== "number" || typeof row.lon !== "number" || !Number.isFinite(row.lat) || !Number.isFinite(row.lon)) continue;
+    fixes.push({
+      id: typeof row.id === "string" ? row.id : newId(),
+      at: typeof row.at === "number" ? row.at : Date.now(),
+      lat: row.lat,
+      lon: row.lon,
+      accuracyM: typeof row.accuracyM === "number" ? row.accuracyM : null,
+    });
+  }
+  return fixes.slice(-400);
+}
 
 async function readSnapshot(kv: Kv): Promise<Snapshot> {
   const [entries, categories, tags, views, sync, flags] = await Promise.all([
@@ -64,7 +105,16 @@ async function readSnapshot(kv: Kv): Promise<Snapshot> {
   };
 }
 
-let opening: Promise<{ kv: Kv; persisted: boolean; snap: Snapshot }> | null = null;
+async function readDesk(kv: Kv): Promise<Desk> {
+  const snap = await readSnapshot(kv);
+  return {
+    ...snap,
+    settings: normalizeSettings(await kv.get<PocketSettings>("meta", "settings")),
+    trail: normalizeTrail(await kv.get("meta", "trail")),
+  };
+}
+
+let opening: Promise<{ kv: Kv; persisted: boolean; snap: Desk }> | null = null;
 
 function loadOrSeed() {
   if (!opening) {
@@ -87,7 +137,7 @@ function loadOrSeed() {
       if (!flags?.seeded) {
         await kv.put("meta", "flags", { seeded: true, dismissedIntro: flags?.dismissedIntro === true });
       }
-      const snap = await readSnapshot(kv);
+      const snap = await readDesk(kv);
       return { kv, persisted, snap };
     })().catch((error) => {
       opening = null;
@@ -112,9 +162,14 @@ function base64ToBlob(encoded: string): Blob | null {
   }
 }
 
+async function readBlob(kv: Kv, store: "audio" | "blobs", id: string) {
+  const blob = await kv.get<Blob>(store, id);
+  return blob instanceof Blob ? blob : undefined;
+}
+
 export function HoldProvider({ children }: { children: ReactNode }) {
   const kvRef = useRef<Kv | null>(null);
-  const [snap, setSnap] = useState<Snapshot | null>(null);
+  const [snap, setSnap] = useState<Desk | null>(null);
   const [persisted, setPersisted] = useState(true);
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -141,7 +196,7 @@ export function HoldProvider({ children }: { children: ReactNode }) {
     const reload = async () => {
       const kv = kvRef.current;
       if (!kv) return;
-      setSnap(await readSnapshot(kv));
+      setSnap(await readDesk(kv));
     };
     const mutate = async (work: (kv: Kv) => Promise<void>) => {
       const kv = kvRef.current;
@@ -155,7 +210,8 @@ export function HoldProvider({ children }: { children: ReactNode }) {
       ready: true,
       persisted,
       problem,
-      showIntro: !snap.dismissedIntro && snap.entries.some((entry) => (SEED_IDS as readonly string[]).includes(entry.id)),
+      showIntro: !snap.dismissedIntro && snap.entries.some((entry) => (SEED_IDS as readonly string[]).includes(entry.id) && !entry.deletedAt),
+      examples: isExampleSet(snap.entries),
       saveEntry: (entry) =>
         mutate(async (kv) => {
           const next = { ...entry, updatedAt: Date.now(), dirty: true };
@@ -166,6 +222,7 @@ export function HoldProvider({ children }: { children: ReactNode }) {
           const current = await kv.get<Entry>("entries", id);
           if (!current) return;
           await kv.del("audio", id);
+          await kv.del("blobs", id);
           if (current.syncedAt === null) {
             await kv.del("entries", id);
             return;
@@ -180,8 +237,17 @@ export function HoldProvider({ children }: { children: ReactNode }) {
       loadAudio: async (id) => {
         const kv = kvRef.current;
         if (!kv) return undefined;
-        const blob = await kv.get<Blob>("audio", id);
-        return blob instanceof Blob ? blob : undefined;
+        return readBlob(kv, "audio", id);
+      },
+      saveBlob: async (id, blob) => {
+        const kv = kvRef.current;
+        if (!kv) return;
+        await kv.put("blobs", id, blob);
+      },
+      loadBlob: async (id) => {
+        const kv = kvRef.current;
+        if (!kv) return undefined;
+        return readBlob(kv, "blobs", id);
       },
       ensureCategory: async (name) => {
         const trimmed = name.trim();
@@ -286,6 +352,34 @@ export function HoldProvider({ children }: { children: ReactNode }) {
           const current = (await kv.get<SyncConfig>("meta", "sync")) ?? defaultSync();
           await kv.put("meta", "sync", { ...current, ...patch, deviceId: current.deviceId });
         }),
+      setSettings: (patch) =>
+        mutate(async (kv) => {
+          const current = normalizeSettings(await kv.get<PocketSettings>("meta", "settings"));
+          await kv.put("meta", "settings", normalizeSettings({ ...current, ...patch }));
+        }),
+      dropFix: async (fix) => {
+        const last = snap.trail[snap.trail.length - 1];
+        if (last && haversineMeters(last.lat, last.lon, fix.lat, fix.lon) < 25 && fix.at - last.at < 120_000) return;
+        await mutate(async (kv) => {
+          const trail = normalizeTrail(await kv.get("meta", "trail"));
+          await kv.put("meta", "trail", [...trail, fix].slice(-400));
+        });
+      },
+      clearTrail: () =>
+        mutate(async (kv) => {
+          await kv.put("meta", "trail", []);
+        }),
+      clearExamples: () =>
+        mutate(async (kv) => {
+          const entries = await kv.getAll<Entry>("entries");
+          if (!isExampleSet(entries)) return;
+          for (const id of SEED_IDS) await kv.del("entries", id);
+          for (const id of SEED_CATEGORY_IDS) await kv.del("categories", id);
+          for (const id of SEED_TAG_IDS) await kv.del("tags", id);
+          for (const id of SEED_VIEW_IDS) await kv.del("views", id);
+          const flags = (await kv.get<Flags>("meta", "flags")) ?? { seeded: true, dismissedIntro: true };
+          await kv.put("meta", "flags", { ...flags, seeded: true, dismissedIntro: true });
+        }),
       dismissIntro: () =>
         mutate(async (kv) => {
           const flags = (await kv.get<Flags>("meta", "flags")) ?? { seeded: true, dismissedIntro: false };
@@ -294,7 +388,7 @@ export function HoldProvider({ children }: { children: ReactNode }) {
       runSync: async () => {
         const kv = kvRef.current;
         if (!kv) throw new Error("The log is not open yet.");
-        const current = await readSnapshot(kv);
+        const current = await readDesk(kv);
         try {
           const result = await pushSync(current);
           await kv.replace("entries", result.snapshot.entries);
@@ -324,11 +418,7 @@ export function HoldProvider({ children }: { children: ReactNode }) {
             }
           }
           await kv.replace("entries", [...map.values()]);
-        }).then(async () => {
-          const kv = kvRef.current;
-          if (!kv) return 0;
-          return entries.length;
-        }),
+        }).then(async () => entries.length),
       importHealth: (drafts) =>
         mutate(async (kv) => {
           const sync = (await kv.get<SyncConfig>("meta", "sync")) ?? snap.sync;
@@ -393,6 +483,8 @@ export function HoldProvider({ children }: { children: ReactNode }) {
           await kv.clear("tags");
           await kv.clear("views");
           await kv.clear("audio");
+          await kv.clear("blobs");
+          await kv.put("meta", "trail", []);
           await kv.put("meta", "flags", { seeded: true, dismissedIntro: true });
         }),
     };

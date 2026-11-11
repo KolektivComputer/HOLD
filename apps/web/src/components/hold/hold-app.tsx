@@ -112,7 +112,7 @@ export function HoldApp() {
         )}
       >
         {selected ? (
-          <EntryPanel entry={selected} onClose={() => setSelectedId(null)} />
+          <EntryPanel entry={selected} onClose={() => setSelectedId(null)} onOpen={openEntry} />
         ) : (
           <div className="px-6 py-8">
             <p className="font-mono text-xs tracking-wider text-muted uppercase">Nothing open</p>

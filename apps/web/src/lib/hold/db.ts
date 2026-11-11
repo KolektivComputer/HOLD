@@ -1,4 +1,4 @@
-export const STORES = ["entries", "categories", "tags", "views", "audio", "meta"] as const;
+export const STORES = ["entries", "categories", "tags", "views", "audio", "blobs", "meta"] as const;
 export type StoreName = (typeof STORES)[number];
 
 export interface Kv {
@@ -99,7 +99,7 @@ class MemoryKv implements Kv {
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open("hold", 1);
+    const req = indexedDB.open("hold", 2);
     req.onupgradeneeded = () => {
       const database = req.result;
       for (const name of STORES) {

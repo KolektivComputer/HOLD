@@ -22,13 +22,11 @@ export function LogList({
 
   return (
     <div className="flex flex-col">
-      {hold.showIntro ? (
+      {hold.examples ? (
         <div className="flex flex-col gap-3 border-b border-muted/25 px-4 py-4">
-          <p className="max-w-md text-sm text-muted">
-            A few examples are in the log so it isn’t blank. They stay on this device until you delete them.
-          </p>
-          <button type="button" onClick={() => void hold.dismissIntro()} className="min-h-11 self-start text-sm text-accent">
-            Hide this
+          <p className="max-w-md text-sm text-muted">This is still the example set. Clear it when you want the log empty.</p>
+          <button type="button" onClick={() => void hold.clearExamples()} className="min-h-11 self-start text-sm text-accent">
+            Clear examples
           </button>
         </div>
       ) : null}

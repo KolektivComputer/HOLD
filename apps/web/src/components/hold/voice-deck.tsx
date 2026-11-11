@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Mic, Square } from "lucide-react";
 import { formatDuration } from "@/lib/hold/format";
+import { phraseEntry } from "@/lib/hold/spots";
 import { useHold } from "@/lib/hold/store";
 import { newId, type Entry } from "@/lib/hold/types";
 
@@ -35,6 +36,8 @@ export function VoiceDeck({ onOpen }: { onOpen: (id: string) => void }) {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [savedId, setSavedId] = useState<string | null>(null);
+  const [phrase, setPhrase] = useState("");
+  const [phraseKind, setPhraseKind] = useState("voice");
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
   const speech = useRef<InstanceType<SpeechCtor> | null>(null);
@@ -205,6 +208,45 @@ export function VoiceDeck({ onOpen }: { onOpen: (id: string) => void }) {
           Open it in the log
         </button>
       ) : null}
+      <form
+        className="flex w-full max-w-sm flex-col gap-3 border-t border-muted/25 pt-6"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const filed = phraseEntry(phraseKind, phrase, hold.sync.deviceId);
+          if (!filed) {
+            setError("Say something first.");
+            return;
+          }
+          void hold.saveEntry(filed).then(() => {
+            setSavedId(filed.id);
+            setPhrase("");
+            setStatus("Filed from the phrase.");
+          });
+        }}
+      >
+        <p className="text-sm text-muted">
+          On the watch, a Shortcut can open this pocket as /?kind=voice&text= plus the dictated line. kind is voice, phone, or discord. The same phrases work in the box below.
+        </p>
+        <label className="flex flex-col gap-1.5">
+          <span className="font-mono text-xs tracking-wider text-muted uppercase">Phrase</span>
+          <select value={phraseKind} onChange={(event) => setPhraseKind(event.target.value)} className="min-h-11 rounded-md border border-muted/30 bg-bg px-3">
+            <option value="voice">Save a voice note</option>
+            <option value="phone">Save a phone number</option>
+            <option value="discord">Save a Discord account</option>
+            <option value="note">Save a note</option>
+          </select>
+        </label>
+        <input
+          value={phrase}
+          onChange={(event) => setPhrase(event.target.value)}
+          placeholder="What you dictated"
+          aria-label="Dictated line"
+          className="min-h-11 rounded-md border border-muted/30 bg-bg px-3"
+        />
+        <button type="submit" className="min-h-11 text-sm text-accent">
+          File the phrase
+        </button>
+      </form>
     </div>
   );
 }

@@ -1,8 +1,15 @@
-export const KINDS = ["note", "number", "voice", "radio", "health", "place"] as const;
+import type { InkStroke } from "./ink.ts";
+
+export const KINDS = ["note", "number", "voice", "radio", "health", "place", "contact"] as const;
 export type Kind = (typeof KINDS)[number];
 
 export const RADIO_PROTOCOLS = ["nfc", "rfid", "subghz", "ir", "ibutton", "other"] as const;
 export type RadioProtocol = (typeof RADIO_PROTOCOLS)[number];
+
+export const SPOT_KINDS = ["phone", "email", "discord", "x", "fluxer", "address"] as const;
+export type SpotKind = (typeof SPOT_KINDS)[number];
+
+export type ContactHandle = { kind: SpotKind; value: string };
 
 export type Stamp = {
   id: string;
@@ -24,7 +31,7 @@ export type SavedView = Stamp & {
 };
 
 export type Payload =
-  | { kind: "note" }
+  | { kind: "note"; ink?: InkStroke[]; shotId?: string }
   | { kind: "number"; phone: string }
   | { kind: "voice"; durationMs: number; transcript: string; hasAudio: boolean; mime: string }
   | {
@@ -43,7 +50,16 @@ export type Payload =
       source: "manual" | "import";
       recordedAt: number;
     }
-  | { kind: "place"; lat: number | null; lon: number | null };
+  | {
+      kind: "place";
+      lat: number | null;
+      lon: number | null;
+      accuracyM: number | null;
+      plus: string;
+      address: string;
+      w3w: string;
+    }
+  | { kind: "contact"; handles: ContactHandle[] };
 
 export type Entry = Stamp & {
   kind: Kind;
@@ -65,6 +81,22 @@ export type SyncConfig = {
   lastCursor: string | null;
   lastSyncAt: number | null;
   lastError: string | null;
+};
+
+export type PocketMode = "full" | "thin";
+
+export type PocketSettings = {
+  mode: PocketMode;
+  follow: boolean;
+  deepseekKey: string;
+};
+
+export type Fix = {
+  id: string;
+  at: number;
+  lat: number;
+  lon: number;
+  accuracyM: number | null;
 };
 
 export type LogFilter = {
@@ -114,6 +146,10 @@ export function defaultSync(deviceId = newId()): SyncConfig {
     lastSyncAt: null,
     lastError: null,
   };
+}
+
+export function defaultSettings(): PocketSettings {
+  return { mode: "full", follow: false, deepseekKey: "" };
 }
 
 export function filterFromView(view: SavedView): LogFilter {

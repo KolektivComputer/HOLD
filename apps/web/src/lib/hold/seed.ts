@@ -1,6 +1,16 @@
 import type { Category, Entry, SavedView, Snapshot, Tag } from "./types.ts";
 
 export const SEED_IDS = ["ent_shed", "ent_tow", "ent_voice", "ent_nfc", "ent_hr", "ent_place"] as const;
+export const SEED_CATEGORY_IDS = ["cat_personal", "cat_radio", "cat_errands", "cat_health"] as const;
+export const SEED_TAG_IDS = ["tag_later", "tag_driving", "tag_flipper"] as const;
+export const SEED_VIEW_IDS = ["view_radio", "view_driving"] as const;
+
+export function isExampleSet(entries: { id: string; deletedAt: number | null }[]): boolean {
+  const live = entries.filter((entry) => !entry.deletedAt);
+  if (live.length !== SEED_IDS.length) return false;
+  const ids = new Set(live.map((entry) => entry.id));
+  return SEED_IDS.every((id) => ids.has(id));
+}
 
 function stamp(id: string, now: number, offset: number): Pick<Category, "id" | "updatedAt" | "deletedAt" | "dirty" | "syncedAt"> {
   return { id, updatedAt: now - offset, deletedAt: null, dirty: false, syncedAt: null };
@@ -143,7 +153,7 @@ export function buildSeed(deviceId: string, now: number): Pick<Snapshot, "entrie
       updatedAt: now - 14_400_000,
       categoryId: null,
       tagIds: ["tag_driving"],
-      payload: { kind: "place", lat: null, lon: null },
+      payload: { kind: "place", lat: null, lon: null, accuracyM: null, plus: "", address: "", w3w: "" },
     },
   ];
   return { entries, categories, tags, views };

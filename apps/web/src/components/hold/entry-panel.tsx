@@ -1,10 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AreaField, Button, SelectField, TaxonomyFields, TextField } from "@/components/hold/ui";
-import { downloadBlob, formatHz, KIND_LABEL, PROTOCOL_LABEL, radioExtension, safeFilename, telHref } from "@/lib/hold/format";
+import { InkPad, type InkPadHandle } from "@/components/hold/ink-pad";
+import { PlaceEditor, placePayload } from "@/components/hold/place-editor";
+import { SpotBar } from "@/components/hold/spot-bar";
+import { downloadBlob, formatHz, KIND_LABEL, PROTOCOL_LABEL, radioExtension, safeFilename, SPOT_LABEL, telHref } from "@/lib/hold/format";
+import { packJpeg, readOnDevice } from "@/lib/hold/ocr";
+import { readWithDeepseek } from "@/lib/hold/remote";
+import { canon } from "@/lib/hold/spots";
 import { useHold } from "@/lib/hold/store";
-import { RADIO_PROTOCOLS, type Entry, type Payload, type RadioProtocol } from "@/lib/hold/types";
+import { newId, RADIO_PROTOCOLS, type Entry, type Payload, type RadioProtocol, type SpotKind } from "@/lib/hold/types";
 
-export function EntryPanel({ entry, onClose }: { entry: Entry; onClose: () => void }) {
+export function EntryPanel({ entry, onClose, onOpen }: { entry: Entry; onClose: () => void; onOpen: (id: string) => void }) {
   const hold = useHold();
   const [title, setTitle] = useState(entry.title);
   const [body, setBody] = useState(entry.body);
@@ -14,7 +20,11 @@ export function EntryPanel({ entry, onClose }: { entry: Entry; onClose: () => vo
   const [payload, setPayload] = useState<Payload>(entry.payload);
   const [confirming, setConfirming] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [shotUrl, setShotUrl] = useState<string | null>(null);
+  const [reading, setReading] = useState("");
+  const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const pad = useRef<InkPadHandle>(null);
 
   useEffect(() => {
     const category = hold.categories.find((item) => item.id === entry.categoryId);
@@ -45,6 +55,25 @@ export function EntryPanel({ entry, onClose }: { entry: Entry; onClose: () => vo
     };
   }, [entry.id, entry.payload, hold]);
 
+  useEffect(() => {
+    let dead = false;
+    let url: string | null = null;
+    const shotId = entry.payload.kind === "note" ? entry.payload.shotId : undefined;
+    if (!shotId) {
+      setShotUrl(null);
+      return;
+    }
+    void hold.loadBlob(shotId).then((blob) => {
+      if (dead || !blob) return;
+      url = URL.createObjectURL(blob);
+      setShotUrl(url);
+    });
+    return () => {
+      dead = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [entry.id, entry.payload, hold]);
+
   const addTag = async () => {
     const id = await hold.ensureTag(tagDraft);
     if (!id) return;
@@ -62,6 +91,62 @@ export function EntryPanel({ entry, onClose }: { entry: Entry; onClose: () => vo
     setError("");
     const categoryId = await hold.ensureCategory(categoryName);
     await hold.saveEntry({ ...entry, title: title.trim() || entry.title, body: body.trim(), categoryId, tagIds, payload });
+  };
+
+  const readInk = async (cloud: boolean) => {
+    setReading(cloud ? "Sending the page to DeepSeek…" : "Reading on this device…");
+    setError("");
+    try {
+      const blob = await pad.current?.exportPng();
+      if (!blob) throw new Error("The page is not ready.");
+      const text = cloud ? (await readWithDeepseek({ data: { key: hold.settings.deepseekKey, image: await packJpeg(blob) } })).text : await readOnDevice(blob);
+      setBody((current) => (current.trim() ? `${current.trim()}\n${text}` : text));
+      setNotice(cloud ? "DeepSeek's reading is in the details. Check it before you trust it." : "On-device reading is in the details. Handwriting on a small phone will be rough.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not read the page.");
+    } finally {
+      setReading("");
+    }
+  };
+
+  const markup = async () => {
+    const blob = await renderCard(title || entry.title, body);
+    const id = newId();
+    await hold.saveBlob(id, blob);
+    const now = Date.now();
+    const note: Entry = {
+      id,
+      kind: "note",
+      title: `Markup · ${title || entry.title}`.slice(0, 80),
+      body: "",
+      createdAt: now,
+      updatedAt: now,
+      categoryId: entry.categoryId,
+      tagIds: entry.tagIds,
+      pinned: false,
+      deletedAt: null,
+      dirty: true,
+      syncedAt: null,
+      deviceId: hold.sync.deviceId,
+      payload: { kind: "note", shotId: id },
+    };
+    await hold.saveEntry(note);
+    onOpen(id);
+  };
+
+  const useSpot = async (kind: SpotKind, value: string) => {
+    const { filedSpot } = await import("@/lib/hold/spots");
+    const filed = filedSpot(kind, value, hold.sync.deviceId, title);
+    await hold.saveEntry(filed);
+    setNotice(`Filed as ${SPOT_LABEL[kind].toLowerCase()}.`);
+  };
+
+  const addTo = async (id: string, kind: SpotKind, value: string) => {
+    const target = hold.entries.find((item) => item.id === id && item.payload.kind === "contact");
+    if (!target || target.payload.kind !== "contact") return;
+    if (target.payload.handles.some((handle) => handle.kind === kind && canon(kind, handle.value) === canon(kind, value))) return;
+    await hold.saveEntry({ ...target, payload: { kind: "contact", handles: [...target.payload.handles, { kind, value: value.trim() }] } });
+    setNotice(`Added to ${target.title}.`);
   };
 
   const downloadRadio = () => {
@@ -89,6 +174,25 @@ export function EntryPanel({ entry, onClose }: { entry: Entry; onClose: () => vo
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4">
         <TextField label="Title" value={title} onChange={(event) => setTitle(event.target.value)} />
+        {payload.kind === "note" ? (
+          <>
+            <InkPad ref={pad} strokes={payload.ink ?? []} background={shotUrl} onChange={(ink) => setPayload({ kind: "note", ink, shotId: payload.shotId })} />
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => void readInk(false)} disabled={Boolean(reading)}>
+                Read on this device
+              </Button>
+              <Button onClick={() => void readInk(true)} disabled={Boolean(reading) || !hold.settings.deepseekKey}>
+                Read with DeepSeek
+              </Button>
+            </div>
+            {reading ? <p className="text-sm text-muted">{reading}</p> : null}
+            <p className="text-sm text-muted">
+              On-device reading never leaves the phone. It is slow, and a Stylo 4 will struggle with handwriting. DeepSeek can read a scrawl, and it only runs when you tap it. The key stays in Library.
+            </p>
+          </>
+        ) : (
+          <Button onClick={() => void markup()}>Draw on this</Button>
+        )}
         {payload.kind === "number" ? (
           <>
             <TextField label="Phone" value={payload.phone} onChange={(event) => setPayload({ kind: "number", phone: event.target.value })} inputMode="tel" />
@@ -145,22 +249,21 @@ export function EntryPanel({ entry, onClose }: { entry: Entry; onClose: () => vo
           </>
         ) : null}
         {payload.kind === "place" ? (
-          <div className="grid grid-cols-2 gap-3">
-            <TextField
-              label="Latitude"
-              value={payload.lat ?? ""}
-              onChange={(event) => setPayload({ ...payload, lat: event.target.value.trim() ? Number(event.target.value) : null })}
-              inputMode="decimal"
-            />
-            <TextField
-              label="Longitude"
-              value={payload.lon ?? ""}
-              onChange={(event) => setPayload({ ...payload, lon: event.target.value.trim() ? Number(event.target.value) : null })}
-              inputMode="decimal"
-            />
+          <PlaceEditor place={placePayload(payload.lat, payload.lon, payload)} onChange={setPayload} onFix={(fix) => void hold.dropFix(fix)} />
+        ) : null}
+        {payload.kind === "contact" ? (
+          <div className="flex flex-col gap-1">
+            {payload.handles.map((handle) => (
+              <p key={`${handle.kind}:${handle.value}`} className="text-sm text-fg">
+                <span className="font-mono text-xs tracking-wider text-muted uppercase">{SPOT_LABEL[handle.kind]}</span> {handle.value}
+              </p>
+            ))}
+            {payload.handles.length === 0 ? <p className="text-sm text-muted">No handles yet. Tag one from the details below.</p> : null}
           </div>
         ) : null}
         <AreaField label="Details" value={body} onChange={(event) => setBody(event.target.value)} />
+        <SpotBar text={`${title}\n${body}`} explicit={body || title} entries={hold.entries} onUse={(kind, value) => void useSpot(kind, value)} onAddTo={(id, kind, value) => void addTo(id, kind, value)} />
+        {notice ? <p className="text-sm text-fg">{notice}</p> : null}
         <TaxonomyFields
           categories={hold.categories}
           tags={hold.tags}
@@ -201,4 +304,36 @@ export function EntryPanel({ entry, onClose }: { entry: Entry; onClose: () => vo
       </div>
     </div>
   );
+}
+
+function renderCard(title: string, body: string): Promise<Blob> {
+  const canvas = document.createElement("canvas");
+  canvas.width = 800;
+  canvas.height = 1120;
+  const context = canvas.getContext("2d");
+  if (!context) return Promise.reject(new Error("Could not start a page."));
+  context.fillStyle = "#ebe6d6";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#12140f";
+  context.font = "600 40px sans-serif";
+  const lines = wrap(`${title}\n\n${body}`, context, 720);
+  lines.forEach((line, index) => context.fillText(line, 40, 80 + index * 52));
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Could not start a page."))), "image/png");
+  });
+}
+
+function wrap(text: string, context: CanvasRenderingContext2D, width: number): string[] {
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let line = "";
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word;
+    if (context.measureText(next).width > width && line) {
+      lines.push(line);
+      line = word;
+    } else line = next;
+  }
+  if (line) lines.push(line);
+  return lines.slice(0, 18);
 }
