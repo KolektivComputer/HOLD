@@ -54,22 +54,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
-import com.composables.icons.lucide.Camera
-import com.composables.icons.lucide.Check
-import com.composables.icons.lucide.MicOff
-import com.composables.icons.lucide.Pencil
-import com.composables.icons.lucide.Square
-import com.composables.icons.lucide.FileText
 import kotlinx.coroutines.delay
-import com.composables.icons.lucide.Lucide
-import com.composables.icons.lucide.MapPin
-import com.composables.icons.lucide.Mic
-import com.composables.icons.lucide.Pause
-import com.composables.icons.lucide.PenLine
-import com.composables.icons.lucide.Play
-import com.composables.icons.lucide.Plus
-import com.composables.icons.lucide.Radio
-import com.composables.icons.lucide.X
 import computer.kolektiv.hold.geo.plusCode
 import computer.kolektiv.hold.geo.project
 import computer.kolektiv.hold.geo.tilesAround
@@ -133,7 +118,7 @@ fun NotePage(
             IconButton(onClick = {
                 if (editing && (header.isNotBlank() || rest.isNotBlank())) onCommit(header.trim(), rest.trim(), tagIds)
                 onDiscard()
-            }) { Icon(Lucide.X, "Close", tint = HoldThemeColors.fg) }
+            }) { Icon(HoldIcons.X, "Close", tint = HoldThemeColors.fg) }
             TextButton(onClick = onDiscard) { Text("Discard") }
             Box(Modifier.weight(1f))
             IconButton(onClick = {
@@ -144,7 +129,7 @@ fun NotePage(
                     editing = true
                 }
             }) {
-                Icon(if (editing) Lucide.Check else Lucide.Pencil, if (editing) "Done" else "Edit", tint = HoldThemeColors.fg)
+                Icon(if (editing) HoldIcons.Check else HoldIcons.Pencil, if (editing) "Done" else "Edit", tint = HoldThemeColors.fg)
             }
         }
         if (editing) {
@@ -231,11 +216,11 @@ fun HoldFab(open: Boolean, onToggle: () -> Unit, onPick: (String) -> Unit) {
     Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (open) {
             listOf(
-                Triple("text", Lucide.FileText, "Text"),
-                Triple("ink", Lucide.PenLine, "Ink"),
-                Triple("audio", Lucide.Mic, "Audio"),
-                Triple("place", Lucide.MapPin, "Place"),
-                Triple("radio", Lucide.Radio, "Radio"),
+                Triple("text", HoldIcons.FileText, "Text"),
+                Triple("ink", HoldIcons.PenLine, "Ink"),
+                Triple("audio", HoldIcons.Mic, "Audio"),
+                Triple("place", HoldIcons.MapPin, "Place"),
+                Triple("radio", HoldIcons.Radio, "Radio"),
             ).forEach { (id, icon, label) ->
                 Row(
                     Modifier
@@ -252,7 +237,7 @@ fun HoldFab(open: Boolean, onToggle: () -> Unit, onPick: (String) -> Unit) {
             }
         }
         FloatingActionButton(onClick = onToggle, containerColor = HoldThemeColors.accent) {
-            Icon(if (open) Lucide.X else Lucide.Plus, if (open) "Close" else "New", tint = HoldThemeColors.bg)
+            Icon(if (open) HoldIcons.X else HoldIcons.Plus, if (open) "Close" else "New", tint = HoldThemeColors.bg)
         }
     }
 }
@@ -301,7 +286,7 @@ fun LogScreen(controller: HoldController, ports: PocketPorts) {
                         playing = entry.id
                         ports.play(entry.id) { playing = null }
                     }) {
-                        Icon(if (playing == entry.id) Lucide.Pause else Lucide.Play, "Play", tint = HoldThemeColors.fg)
+                        Icon(if (playing == entry.id) HoldIcons.Pause else HoldIcons.Play, "Play", tint = HoldThemeColors.fg)
                     }
                 }
             }
@@ -641,7 +626,7 @@ fun DetailScreen(entry: Entry, controller: HoldController, ports: PocketPorts, p
                         }
                         playing = true
                         ports.play(entry.id) { playing = false }
-                    }) { Icon(if (playing) Lucide.Pause else Lucide.Play, "Play", tint = HoldThemeColors.fg) }
+                    }) { Icon(if (playing) HoldIcons.Pause else HoldIcons.Play, "Play", tint = HoldThemeColors.fg) }
                 }
                 if (!controller.snapshot.settings.autoTranscribe || transcript.isBlank()) {
                     TextButton(onClick = {
@@ -933,23 +918,23 @@ fun VoiceScreen(controller: HoldController, speech: Speech, ports: PocketPorts) 
                         },
                         transcribe = controller.snapshot.settings.autoTranscribe && !muted,
                     )
-                }) { Icon(Lucide.Mic, "Record", tint = HoldThemeColors.accent, modifier = Modifier.size(48.dp)) }
+                }) { Icon(HoldIcons.Mic, "Record", tint = HoldThemeColors.accent, modifier = Modifier.size(48.dp)) }
             } else {
                 IconButton(onClick = {
                     paused = !paused
                     if (paused) speech.pause() else speech.resume()
                     note = if (paused) "Paused" else if (muted) "Muted" else "Recording"
-                }) { Icon(if (paused) Lucide.Play else Lucide.Pause, if (paused) "Resume" else "Pause", tint = HoldThemeColors.fg) }
+                }) { Icon(if (paused) HoldIcons.Play else HoldIcons.Pause, if (paused) "Resume" else "Pause", tint = HoldThemeColors.fg) }
                 IconButton(onClick = {
                     muted = !muted
                     speech.setMuted(muted)
                     note = if (muted) "Muted" else if (paused) "Paused" else "Recording"
-                }) { Icon(if (muted) Lucide.MicOff else Lucide.Mic, if (muted) "Unmute" else "Mute", tint = HoldThemeColors.fg) }
+                }) { Icon(if (muted) HoldIcons.MicOff else HoldIcons.Mic, if (muted) "Unmute" else "Mute", tint = HoldThemeColors.fg) }
                 IconButton(onClick = {
                     listening = false
                     note = "Saving…"
                     speech.stop { file(it) }
-                }) { Icon(Lucide.Square, "Stop", tint = HoldThemeColors.accent) }
+                }) { Icon(HoldIcons.Square, "Stop", tint = HoldThemeColors.accent) }
             }
         }
     }

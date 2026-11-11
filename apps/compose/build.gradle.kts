@@ -32,7 +32,6 @@ kotlin {
             implementation(compose.foundation)
             implementation(compose.material3)
             implementation(compose.ui)
-            implementation("com.composables:icons-lucide-cmp:2.2.1")
         }
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)

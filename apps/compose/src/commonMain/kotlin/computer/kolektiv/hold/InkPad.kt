@@ -43,19 +43,6 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import com.composables.icons.lucide.Brush
-import com.composables.icons.lucide.Eraser
-import com.composables.icons.lucide.Highlighter
-import com.composables.icons.lucide.Image
-import com.composables.icons.lucide.Lucide
-import com.composables.icons.lucide.Pen
-import com.composables.icons.lucide.PenLine
-import com.composables.icons.lucide.Pencil
-import com.composables.icons.lucide.Redo2
-import com.composables.icons.lucide.Save
-import com.composables.icons.lucide.Tags
-import com.composables.icons.lucide.Undo2
-import com.composables.icons.lucide.X
 import computer.kolektiv.hold.model.InkPoint
 import computer.kolektiv.hold.model.InkStroke
 import computer.kolektiv.hold.model.NamedItem
@@ -80,13 +67,13 @@ fun inkColor(hex: String): Color {
 }
 
 private fun toolIcon(tool: String): ImageVector = when (tool) {
-    "fountain" -> Lucide.PenLine
-    "pencil" -> Lucide.Pencil
-    "brush" -> Lucide.Brush
-    "marker" -> Lucide.Pen
-    "highlighter" -> Lucide.Highlighter
-    "eraser" -> Lucide.Eraser
-    else -> Lucide.Pen
+    "fountain" -> HoldIcons.PenLine
+    "pencil" -> HoldIcons.Pencil
+    "brush" -> HoldIcons.Brush
+    "marker" -> HoldIcons.Pen
+    "highlighter" -> HoldIcons.Highlighter
+    "eraser" -> HoldIcons.Eraser
+    else -> HoldIcons.Pen
 }
 
 @Composable
@@ -132,8 +119,8 @@ fun InkEditor(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Row {
-                IconButton(onClick = onSave) { Icon(Lucide.Save, "Save", tint = HoldThemeColors.fg) }
-                IconButton(onClick = onDiscard) { Icon(Lucide.X, "Discard", tint = HoldThemeColors.fg) }
+                IconButton(onClick = onSave) { Icon(HoldIcons.Save, "Save", tint = HoldThemeColors.fg) }
+                IconButton(onClick = onDiscard) { Icon(HoldIcons.X, "Discard", tint = HoldThemeColors.fg) }
             }
             Row {
                 IconButton(onClick = {
@@ -142,15 +129,15 @@ fun InkEditor(
                     current = past.last()
                     past = past.dropLast(1)
                     onStrokes(current)
-                }) { Icon(Lucide.Undo2, "Undo", tint = if (past.isEmpty()) HoldThemeColors.muted else HoldThemeColors.fg) }
+                }) { Icon(HoldIcons.Undo2, "Undo", tint = if (past.isEmpty()) HoldThemeColors.muted else HoldThemeColors.fg) }
                 IconButton(onClick = {
                     if (future.isEmpty()) return@IconButton
                     past = past + listOf(current)
                     current = future.first()
                     future = future.drop(1)
                     onStrokes(current)
-                }) { Icon(Lucide.Redo2, "Redo", tint = if (future.isEmpty()) HoldThemeColors.muted else HoldThemeColors.fg) }
-                IconButton(onClick = onOpenImage) { Icon(Lucide.Image, "Open image", tint = HoldThemeColors.fg) }
+                }) { Icon(HoldIcons.Redo2, "Redo", tint = if (future.isEmpty()) HoldThemeColors.muted else HoldThemeColors.fg) }
+                IconButton(onClick = onOpenImage) { Icon(HoldIcons.Image, "Open image", tint = HoldThemeColors.fg) }
                 if (onRead != null) TextButton(onClick = onRead) { Text("Read") }
             }
         }
@@ -222,7 +209,7 @@ fun InkEditor(
                         toolsOpen = false
                         colorsOpen = false
                     }
-                }) { Icon(Lucide.Tags, "Tags", tint = HoldThemeColors.fg) }
+                }) { Icon(HoldIcons.Tags, "Tags", tint = HoldThemeColors.fg) }
                 Text(tool, color = HoldThemeColors.muted)
             }
         }
@@ -268,7 +255,7 @@ fun TagEditor(
                 if (name.isEmpty()) return@IconButton
                 onCreate(name)
                 draft = ""
-            }) { Icon(Lucide.Tags, "Add tag", tint = HoldThemeColors.fg) }
+            }) { Icon(HoldIcons.Tags, "Add tag", tint = HoldThemeColors.fg) }
         }
     }
 }

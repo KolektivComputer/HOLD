@@ -20,9 +20,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.composables.icons.lucide.Library
-import com.composables.icons.lucide.List as LogIcon
-import com.composables.icons.lucide.Lucide
 import computer.kolektiv.hold.geo.haversineMeters
 import computer.kolektiv.hold.geo.plusCode
 import computer.kolektiv.hold.model.BUILTIN_TAGS
@@ -340,7 +337,7 @@ fun HoldApp(
                 },
                 bottomBar = {
                     NavigationBar(containerColor = HoldThemeColors.bg) {
-                        listOf("log" to ("Log" to Lucide.LogIcon), "library" to ("Library" to Lucide.Library)).forEach { (id, item) ->
+                        listOf("log" to ("Log" to HoldIcons.List), "library" to ("Library" to HoldIcons.Library)).forEach { (id, item) ->
                             NavigationBarItem(
                                 selected = controller.screen == id && !sheet,
                                 onClick = {
