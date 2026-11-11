@@ -64,6 +64,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.TextFieldValue
 import kotlinx.coroutines.delay
 import computer.kolektiv.hold.geo.plusCode
 import computer.kolektiv.hold.geo.project
@@ -124,20 +125,20 @@ fun NotePage(
 ) {
     var editing by remember { mutableStateOf(startEditing) }
     var header by remember { mutableStateOf(title) }
-    var rest by remember { mutableStateOf(body) }
+    var rest by remember { mutableStateOf(TextFieldValue(body)) }
     val headerStyle = MaterialTheme.typography.headlineMedium.merge(TextStyle(color = HoldThemeColors.fg))
     val bodyStyle = MaterialTheme.typography.bodyLarge.merge(TextStyle(color = HoldThemeColors.fg))
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = {
-                if (editing && (header.isNotBlank() || rest.isNotBlank())) onCommit(header.trim(), rest.trim(), tagIds)
+                if (editing && (header.isNotBlank() || rest.text.isNotBlank())) onCommit(header.trim(), rest.text.trim(), tagIds)
                 onDiscard()
             }) { Icon(HoldIcons.X, "Close", tint = HoldThemeColors.fg) }
             TextButton(onClick = onDiscard) { Text("Discard") }
             Box(Modifier.weight(1f))
             IconButton(onClick = {
                 if (editing) {
-                    if (header.isNotBlank() || rest.isNotBlank()) onCommit(header.trim(), rest.trim(), tagIds)
+                    if (header.isNotBlank() || rest.text.isNotBlank()) onCommit(header.trim(), rest.text.trim(), tagIds)
                     editing = false
                 } else {
                     editing = true
@@ -159,7 +160,10 @@ fun NotePage(
                 onValueChange = { value ->
                     val parts = value.split('\n', limit = 2)
                     header = parts[0]
-                    if (parts.size == 2) rest = listOf(parts[1], rest).filter { it.isNotEmpty() }.joinToString("\n")
+                    if (parts.size == 2) {
+                        val extra = listOf(parts[1], rest.text).filter { it.isNotEmpty() }.joinToString("\n")
+                        rest = TextFieldValue(extra)
+                    }
                 },
                 textStyle = headerStyle,
                 cursorBrush = SolidColor(HoldThemeColors.accent),
@@ -169,6 +173,7 @@ fun NotePage(
                     inner()
                 },
             )
+            MarkdownBar { action -> rest = applyMarkdown(rest, action) }
             BasicTextField(
                 value = rest,
                 onValueChange = { rest = it },
@@ -176,14 +181,14 @@ fun NotePage(
                 cursorBrush = SolidColor(HoldThemeColors.accent),
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 decorationBox = { inner ->
-                    if (rest.isEmpty()) Text("Write", style = bodyStyle, color = HoldThemeColors.muted)
+                    if (rest.text.isEmpty()) Text("Write", style = bodyStyle, color = HoldThemeColors.muted)
                     inner()
                 },
             )
         } else {
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(header.ifBlank { "New note" }, style = headerStyle)
-                if (rest.isNotBlank()) Text(rest, style = bodyStyle)
+                if (rest.text.isNotBlank()) MarkdownBody(rest.text, bodyStyle)
             }
         }
     }
@@ -275,62 +280,34 @@ fun HoldFab(actions: List<String>, open: Boolean, onToggle: () -> Unit, onPick: 
 
 @Composable
 fun LogScreen(controller: HoldController, ports: PocketPorts) {
-    var filter by remember { mutableStateOf("all") }
-    var playing by remember { mutableStateOf<String?>(null) }
-    val rows = controller.visible().filter { filter == "all" || it.medium() == filter }
+    val span = controller.logSpan
+    val rows = controller.recent(span)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 88.dp)) {
+        Text(
+            "notes in the last $span",
+            style = MaterialTheme.typography.headlineMedium,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        )
+        Row(Modifier.padding(horizontal = 8.dp)) {
+            listOf("day", "week", "month").forEach { item ->
+                TextButton(onClick = { controller.logSpan = item }) {
+                    Text(if (item == span) item.uppercase() else item)
+                }
+            }
+        }
         if (isExampleSet(controller.snapshot.entries)) {
             Text("These six are examples, so the pocket isn't empty.", color = HoldThemeColors.muted, modifier = Modifier.padding(horizontal = 16.dp))
             Button(onClick = { controller.clearExamples() }, modifier = Modifier.padding(horizontal = 16.dp)) { Text("Clear examples") }
         }
-        Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf("all", "text", "image", "audio").forEach { item ->
-                TextButton(onClick = { filter = item }) { Text(if (item == filter) item.replaceFirstChar { it.uppercase() } else item) }
-            }
-        }
-        if (rows.isEmpty()) Text("Nothing filed on this device.", color = HoldThemeColors.muted, modifier = Modifier.padding(16.dp))
+        if (rows.isEmpty()) Text("Nothing taken in the last $span.", color = HoldThemeColors.muted, modifier = Modifier.padding(16.dp))
         rows.forEach { entry ->
-            val voice = entry.payload as? Payload.Voice
-            val names = entry.tagIds.mapNotNull { id -> controller.snapshot.tags.find { it.id == id && it.deletedAt == null }?.name }
             SwipeItem(
                 onEdit = { controller.selectedId = entry.id },
                 onDelete = { controller.delete(entry.id) },
             ) {
                 ListItem(
                     colors = ListItemDefaults.colors(containerColor = HoldThemeColors.bg),
-                    overlineContent = { Text(entry.medium().replaceFirstChar { it.uppercase() }) },
                     headlineContent = { Text(entry.title.ifBlank { "Untitled" }) },
-                    supportingContent = {
-                        Column {
-                            if (voice != null && voice.hasAudio) Waveform(voice.peaks)
-                            else {
-                                val line = summary(entry)
-                                if (line.isNotBlank()) Text(line)
-                            }
-                            if (names.isNotEmpty()) Text(names.joinToString(" · "), color = HoldThemeColors.accent)
-                            if (entry.lat != null) Text("Place saved", color = HoldThemeColors.muted)
-                            Text(recentStamp(entry), color = HoldThemeColors.muted)
-                        }
-                    },
-                    trailingContent = {
-                        if (voice?.hasAudio == true) {
-                            IconButton(onClick = {
-                                if (playing == entry.id) {
-                                    ports.stopPlay()
-                                    playing = null
-                                    return@IconButton
-                                }
-                                if (ports.loadBlob(entry.id) == null) {
-                                    controller.status = "That recording isn't on this device."
-                                    return@IconButton
-                                }
-                                playing = entry.id
-                                ports.play(entry.id) { playing = null }
-                            }) {
-                                Icon(if (playing == entry.id) HoldIcons.Pause else HoldIcons.Play, "Play", tint = HoldThemeColors.fg)
-                            }
-                        }
-                    },
                     modifier = Modifier.clickable { controller.selectedId = entry.id },
                 )
             }
@@ -637,6 +614,7 @@ private fun fileDraft(controller: HoldController, ports: PocketPorts) {
             lat = draft.lat,
             lon = draft.lon,
             accuracyM = draft.accuracy,
+            folderId = controller.filingFolder,
             payload = payload,
         ),
     )
@@ -762,7 +740,7 @@ fun DetailScreen(entry: Entry, controller: HoldController, ports: PocketPorts, p
             body = body,
             tagIds = tagIds,
             tags = controller.snapshot.tags,
-            startEditing = false,
+            startEditing = remember(entry.id) { controller.consumeEdit() },
             onTags = { tagIds = it },
             onCreateTag = { name ->
                 val id = controller.addTag(name) ?: return@NotePage
@@ -1101,6 +1079,7 @@ fun VoiceScreen(controller: HoldController, speech: Speech, ports: PocketPorts) 
                 lat = if (locate) lat else null,
                 lon = if (locate) lon else null,
                 accuracyM = if (locate) accuracy else null,
+                folderId = controller.filingFolder,
                 payload = Payload.Voice(
                     durationMs = result.durationMs,
                     transcript = text,

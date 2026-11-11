@@ -5,7 +5,10 @@ import computer.kolektiv.hold.geo.plusCode
 import computer.kolektiv.hold.model.HoldJson
 import computer.kolektiv.hold.model.Payload
 import computer.kolektiv.hold.model.Snapshot
+import computer.kolektiv.hold.model.inLast
 import computer.kolektiv.hold.model.isExampleSet
+import computer.kolektiv.hold.parse.parseMarkdown
+import computer.kolektiv.hold.parse.MdBlock
 import computer.kolektiv.hold.model.buildSeed
 import computer.kolektiv.hold.parse.parseFlipper
 import computer.kolektiv.hold.parse.spotText
@@ -35,6 +38,18 @@ class HoldTest {
         val spots = spotText("discord: lizzy and me@example.com and 555-014-0188")
         assertEquals(listOf("discord", "email", "phone"), spots.map { it.kind })
         assertEquals("lizzy", spots.first().value)
+    }
+
+    @Test
+    fun recentWindowAndMarkdown() {
+        val now = 20L * 86_400_000L
+        assertTrue(inLast(now - 86_400_000L, now, "week"))
+        assertFalse(inLast(now - 8L * 86_400_000L, now, "week"))
+        val blocks = parseMarkdown("# Gate\n\n- [x] lock\n\n| Name | Code |\n| --- | --- |\n| shed | 12 |\n")
+        assertTrue(blocks[0] is MdBlock.Heading)
+        assertTrue(blocks[1] is MdBlock.Bullet)
+        val table = blocks[2] as MdBlock.Table
+        assertEquals(listOf("shed", "12"), table.rows[1])
     }
 
     @Test

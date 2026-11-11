@@ -28,6 +28,35 @@ interface PocketPorts {
     }
 
     fun stopPlay() = Unit
+
+    fun hasOutside(): Boolean = false
+
+    fun openOutside(onReady: () -> Unit, onError: (String) -> Unit) {
+        onError("This build can't browse device storage yet.")
+    }
+
+    fun outsideList(): List<ShelfNode> = emptyList()
+
+    fun outsideEnter(id: String, name: String) = Unit
+
+    fun outsideUp(): Boolean = false
+
+    fun outsidePath(): String = ""
+
+    fun outsideRead(id: String): ByteArray? = null
+
+    fun outsideExport(name: String, bytes: ByteArray, onDone: () -> Unit, onError: (String) -> Unit) {
+        onError("This build can't export yet.")
+    }
+
+    fun resetOutside() = Unit
 }
+
+data class ShelfNode(
+    val id: String,
+    val name: String,
+    val directory: Boolean,
+    val kind: String,
+)
 
 object EmptyPorts : PocketPorts

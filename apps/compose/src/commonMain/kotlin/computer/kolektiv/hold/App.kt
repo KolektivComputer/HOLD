@@ -42,6 +42,8 @@ import computer.kolektiv.hold.geo.haversineMeters
 import computer.kolektiv.hold.geo.plusCode
 import computer.kolektiv.hold.model.BUILTIN_TAGS
 import computer.kolektiv.hold.model.Entry
+import computer.kolektiv.hold.model.Folder
+import computer.kolektiv.hold.model.inLast
 import computer.kolektiv.hold.model.Fix
 import computer.kolektiv.hold.model.Handle
 import computer.kolektiv.hold.model.InkStroke
@@ -148,6 +150,11 @@ class HoldController(private val repository: HoldRepository) {
     var swatches by mutableStateOf(INK_COLORS)
     var shotSource by mutableStateOf("")
     var deleteImport by mutableStateOf(false)
+    var folderId by mutableStateOf<String?>(null)
+    var filingFolder by mutableStateOf<String?>(null)
+    var logSpan by mutableStateOf("week")
+    var preferEdit by mutableStateOf(false)
+    var origin by mutableStateOf("log")
     val draft = NoteDraft()
 
     private fun initial(): Snapshot {
@@ -171,6 +178,35 @@ class HoldController(private val repository: HoldRepository) {
         .filter { it.deletedAt == null }
         .sortedWith(compareByDescending<Entry> { it.pinned }.thenByDescending { it.updatedAt })
 
+    fun recent(span: String = logSpan): List<Entry> = visible()
+        .filter { inLast(it.createdAt, nowMillis(), span) }
+        .sortedByDescending { it.createdAt }
+
+    fun foldersHere(parent: String? = folderId): List<Folder> = snapshot.folders
+        .filter { it.deletedAt == null && it.parentId == parent }
+        .sortedBy { it.name.lowercase() }
+
+    fun entriesHere(parent: String? = folderId): List<Entry> = visible()
+        .filter { it.folderId == parent }
+        .sortedBy { it.title.lowercase() }
+
+    fun folderCrumbs(): List<Folder> {
+        val out = mutableListOf<Folder>()
+        var id = folderId
+        while (id != null) {
+            val folder = snapshot.folders.find { it.id == id && it.deletedAt == null } ?: break
+            out += folder
+            id = folder.parentId
+        }
+        return out.asReversed()
+    }
+
+    fun consumeEdit(): Boolean {
+        val open = preferEdit
+        preferEdit = false
+        return open
+    }
+
     fun selected(): Entry? = snapshot.entries.find { it.id == selectedId && it.deletedAt == null }
 
     fun save(entry: Entry, stay: Boolean = false, focus: Boolean = true) {
@@ -183,7 +219,7 @@ class HoldController(private val repository: HoldRepository) {
         if (!focus) return
         if (stay) selectedId = next.id else {
             selectedId = null
-            screen = "log"
+            screen = if (origin == "library") "library" else "log"
         }
     }
 
@@ -199,7 +235,7 @@ class HoldController(private val repository: HoldRepository) {
         snapshot = snapshot.copy(entries = entries)
         repository.save(snapshot)
         selectedId = null
-        screen = "log"
+        if (screen == "write" || screen == "voice") screen = "log"
     }
 
     fun clearExamples() {
@@ -303,6 +339,71 @@ class HoldController(private val repository: HoldRepository) {
         repository.save(snapshot)
     }
 
+    fun makeFolder(name: String) {
+        val clean = name.trim()
+        if (clean.isEmpty()) return
+        val item = Folder(id = newId(), name = clean, parentId = folderId, updatedAt = nowMillis(), dirty = true)
+        snapshot = snapshot.copy(folders = snapshot.folders + item)
+        repository.save(snapshot)
+    }
+
+    fun renameFolder(id: String, name: String) {
+        val clean = name.trim()
+        if (clean.isEmpty()) return
+        snapshot = snapshot.copy(folders = snapshot.folders.map {
+            if (it.id == id) it.copy(name = clean, updatedAt = nowMillis(), dirty = true) else it
+        })
+        repository.save(snapshot)
+    }
+
+    fun deleteFolder(id: String) {
+        val folder = snapshot.folders.find { it.id == id && it.deletedAt == null } ?: return
+        val parent = folder.parentId
+        val now = nowMillis()
+        snapshot = snapshot.copy(
+            folders = snapshot.folders.map {
+                when {
+                    it.id == id -> it.copy(deletedAt = now, updatedAt = now, dirty = true)
+                    it.parentId == id && it.deletedAt == null -> it.copy(parentId = parent, updatedAt = now, dirty = true)
+                    else -> it
+                }
+            },
+            entries = snapshot.entries.map {
+                if (it.folderId == id && it.deletedAt == null) it.copy(folderId = parent, updatedAt = now, dirty = true) else it
+            },
+        )
+        if (folderId == id) folderId = parent
+        repository.save(snapshot)
+        status = "Folder removed. What was inside moved up."
+    }
+
+    fun moveEntry(id: String, target: String?) {
+        snapshot = snapshot.copy(entries = snapshot.entries.map {
+            if (it.id == id) it.copy(folderId = target, updatedAt = nowMillis(), dirty = true) else it
+        })
+        repository.save(snapshot)
+    }
+
+    fun moveFolder(id: String, target: String?) {
+        if (id == target || containsFolder(target, id)) {
+            status = "A folder can't move into itself."
+            return
+        }
+        snapshot = snapshot.copy(folders = snapshot.folders.map {
+            if (it.id == id) it.copy(parentId = target, updatedAt = nowMillis(), dirty = true) else it
+        })
+        repository.save(snapshot)
+    }
+
+    private fun containsFolder(child: String?, ancestor: String): Boolean {
+        var id = child
+        while (id != null) {
+            if (id == ancestor) return true
+            id = snapshot.folders.find { it.id == id }?.parentId
+        }
+        return false
+    }
+
     fun addHandle(id: String, kind: String, value: String) {
         val entry = snapshot.entries.find { it.id == id } ?: return
         val contact = entry.payload as? Payload.Contact ?: return
@@ -369,6 +470,8 @@ fun HoldApp(
     )
     fun openSheet(action: String) {
         fabOpen = false
+        controller.filingFolder = if (controller.screen == "library") controller.folderId else null
+        controller.origin = if (controller.screen == "library") "library" else "log"
         controller.selectedId = null
         controller.draft.clear()
         when (action) {
@@ -398,11 +501,12 @@ fun HoldApp(
     HoldTheme {
         val selected = controller.selected()
         val sheet = selected != null || controller.screen == "write" || controller.screen == "voice"
-        val onLog = !sheet && controller.screen == "log"
+        val browsing = !sheet && (controller.screen == "log" || controller.screen == "library")
         val drawer = rememberDrawerState(DrawerValue.Closed)
         val scope = rememberCoroutineScope()
         var wipe by remember { mutableStateOf(false) }
         val page = when (controller.screen) {
+            "library" -> "Library"
             "settings" -> "Settings"
             "settings-quick" -> "Quick list"
             "settings-sync" -> "Sync"
@@ -452,7 +556,7 @@ fun HoldApp(
                         )
                     },
                     floatingActionButton = {
-                        if (onLog) {
+                        if (browsing) {
                             HoldFab(controller.snapshot.settings.quick, fabOpen, { fabOpen = !fabOpen }) { action ->
                                 if (action == "image") askInk = true else openSheet(action)
                             }
@@ -470,6 +574,16 @@ fun HoldApp(
                                 label = { Text("Log") },
                                 icon = { Icon(HoldIcons.List, "Log", tint = HoldThemeColors.fg) },
                             )
+                            NavigationBarItem(
+                                selected = controller.screen == "library" && !sheet,
+                                onClick = {
+                                    controller.selectedId = null
+                                    controller.screen = "library"
+                                    fabOpen = false
+                                },
+                                label = { Text("Library") },
+                                icon = { Icon(HoldIcons.Library, "Library", tint = HoldThemeColors.fg) },
+                            )
                         }
                     },
                 ) { padding ->
@@ -477,8 +591,9 @@ fun HoldApp(
                         if (controller.status.isNotBlank()) {
                             Text(controller.status, color = HoldThemeColors.muted, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
                         }
-                        Box(Modifier.weight(1f).padding(horizontal = if (controller.screen == "log") 0.dp else 16.dp)) {
+                        Box(Modifier.weight(1f).padding(horizontal = if (controller.screen == "log" || controller.screen == "library") 0.dp else 16.dp)) {
                             when {
+                                controller.screen == "library" && selected == null -> LibraryScreen(controller, ports)
                                 controller.screen == "settings" && selected == null -> SettingsScreen(controller)
                                 controller.screen == "settings-quick" && selected == null -> QuickListScreen(controller)
                                 controller.screen == "settings-sync" && selected == null -> SyncScreen(controller, poster)
@@ -494,7 +609,9 @@ fun HoldApp(
                 EntrySheet(onDismiss = {
                     controller.selectedId = null
                     controller.draft.clear()
-                    if (!controller.screen.startsWith("settings")) controller.screen = "log"
+                    if (controller.screen == "write" || controller.screen == "voice") {
+                        controller.screen = if (controller.origin == "library") "library" else "log"
+                    }
                 }) {
                     when {
                         selected != null -> DetailScreen(selected, controller, ports, poster, speech)

@@ -595,6 +595,35 @@ internal object HoldIcons {
             close()
         },
     )
+
+    val Folder: ImageVector = icon(
+        "Folder",
+        path {
+            moveTo(20f, 20f)
+            lineTo(4f, 20f)
+            lineTo(4f, 8f)
+            lineTo(9f, 8f)
+            lineTo(11f, 6f)
+            lineTo(20f, 6f)
+            close()
+        },
+    )
+
+    val More: ImageVector = icon(
+        "More",
+        path {
+            moveTo(12f, 5f)
+            horizontalLineTo(12.01f)
+        },
+        path {
+            moveTo(12f, 12f)
+            horizontalLineTo(12.01f)
+        },
+        path {
+            moveTo(12f, 19f)
+            horizontalLineTo(12.01f)
+        },
+    )
 }
 
 private fun path(block: PathBuilder.() -> Unit): List<PathNode> = PathBuilder().apply(block).nodes

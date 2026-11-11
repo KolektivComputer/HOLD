@@ -104,6 +104,7 @@ data class Entry(
     val lat: Double? = null,
     val lon: Double? = null,
     val accuracyM: Double? = null,
+    val folderId: String? = null,
     val payload: Payload,
 ) : Stamp
 
@@ -147,6 +148,17 @@ data class Palette(
     override val id: String,
     val name: String,
     val colors: List<String> = emptyList(),
+    override val updatedAt: Long,
+    override val deletedAt: Long? = null,
+    override val dirty: Boolean = false,
+    override val syncedAt: Long? = null,
+) : Stamp
+
+@Serializable
+data class Folder(
+    override val id: String,
+    val name: String,
+    val parentId: String? = null,
     override val updatedAt: Long,
     override val deletedAt: Long? = null,
     override val dirty: Boolean = false,
@@ -217,6 +229,15 @@ fun Entry.medium(): String = when (type) {
     }
 }
 
+fun inLast(createdAt: Long, now: Long, span: String): Boolean {
+    val window = when (span) {
+        "day" -> 86_400_000L
+        "month" -> 30L * 86_400_000L
+        else -> 7L * 86_400_000L
+    }
+    return createdAt >= now - window
+}
+
 @Serializable
 data class Snapshot(
     val entries: List<Entry> = emptyList(),
@@ -224,6 +245,7 @@ data class Snapshot(
     val tags: List<NamedItem> = emptyList(),
     val views: List<SavedView> = emptyList(),
     val palettes: List<Palette> = emptyList(),
+    val folders: List<Folder> = emptyList(),
     val sync: SyncConfig = SyncConfig(),
     val settings: PocketSettings = PocketSettings(),
     val trail: List<Fix> = emptyList(),

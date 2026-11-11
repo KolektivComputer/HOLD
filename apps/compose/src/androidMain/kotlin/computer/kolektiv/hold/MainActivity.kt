@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import computer.kolektiv.hold.geo.nominatimAddress
@@ -61,6 +62,55 @@ class MainActivity : ComponentActivity() {
 
     private val askMic = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) whenMic?.invoke() else micRefused?.invoke()
+    }
+    private var outsideReady: (() -> Unit)? = null
+    private var outsideFailed: ((String) -> Unit)? = null
+    private var exportBytes: ByteArray? = null
+    private var exportDone: (() -> Unit)? = null
+    private var exportFailed: ((String) -> Unit)? = null
+    private val openTree = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri == null) {
+            outsideFailed?.invoke("No folder was opened.")
+            return@registerForActivityResult
+        }
+        val read = Intent.FLAG_GRANT_READ_URI_PERMISSION
+        val both = read or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        if (runCatching { contentResolver.takePersistableUriPermission(uri, both) }.isFailure) {
+            runCatching { contentResolver.takePersistableUriPermission(uri, read) }
+        }
+        File(filesDir, "outside-tree.txt").writeText(uri.toString())
+        if (outsideTree() == null) outsideFailed?.invoke("HOLD couldn't keep permission to read that folder.")
+        else outsideReady?.invoke()
+    }
+    private val createDoc = registerForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
+        val bytes = exportBytes
+        if (uri == null || bytes == null) {
+            exportFailed?.invoke("Export was cancelled.")
+            return@registerForActivityResult
+        }
+        val wrote = runCatching { contentResolver.openOutputStream(uri)?.use { it.write(bytes) } }.isSuccess
+        if (wrote) exportDone?.invoke() else exportFailed?.invoke("Couldn't write that file.")
+    }
+
+    internal fun outsideTree(): Uri? {
+        val raw = File(filesDir, "outside-tree.txt").takeIf { it.exists() }?.readText()?.trim().orEmpty()
+        if (raw.isEmpty()) return null
+        val uri = Uri.parse(raw)
+        val held = contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
+        return if (held) uri else null
+    }
+
+    internal fun chooseOutside(onReady: () -> Unit, onError: (String) -> Unit) {
+        outsideReady = onReady
+        outsideFailed = onError
+        openTree.launch(null)
+    }
+
+    internal fun writeOutside(name: String, bytes: ByteArray, onDone: () -> Unit, onError: (String) -> Unit) {
+        exportBytes = bytes
+        exportDone = onDone
+        exportFailed = onError
+        createDoc.launch(name)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -293,6 +343,92 @@ private class AndroidPorts(private val activity: MainActivity) : PocketPorts {
         .firstOrNull { runCatching { manager.isProviderEnabled(it) }.getOrDefault(false) }
 
     private fun safe(id: String) = id.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.ifBlank { "blob" }
+
+    private val shelf = ArrayDeque<Pair<String, String>>()
+
+    override fun hasOutside(): Boolean = activity.outsideTree() != null
+
+    override fun openOutside(onReady: () -> Unit, onError: (String) -> Unit) {
+        activity.chooseOutside(onReady, onError)
+    }
+
+    override fun resetOutside() {
+        shelf.clear()
+    }
+
+    override fun outsideList(): List<ShelfNode> {
+        val tree = activity.outsideTree() ?: return emptyList()
+        if (shelf.isEmpty()) {
+            val id = DocumentsContract.getTreeDocumentId(tree)
+            shelf.addLast(id to documentName(tree, id))
+        }
+        return children(tree, shelf.last().first)
+    }
+
+    override fun outsideEnter(id: String, name: String) {
+        shelf.addLast(id to name)
+    }
+
+    override fun outsideUp(): Boolean {
+        if (shelf.size <= 1) return false
+        shelf.removeLast()
+        return true
+    }
+
+    override fun outsidePath(): String = shelf.joinToString(" / ") { it.second }
+
+    override fun outsideRead(id: String): ByteArray? {
+        val tree = activity.outsideTree() ?: return null
+        val uri = DocumentsContract.buildDocumentUriUsingTree(tree, id)
+        return activity.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+    }
+
+    override fun outsideExport(name: String, bytes: ByteArray, onDone: () -> Unit, onError: (String) -> Unit) {
+        activity.writeOutside(name, bytes, onDone, onError)
+    }
+
+    private fun children(tree: Uri, parent: String): List<ShelfNode> {
+        val uri = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parent)
+        val rows = mutableListOf<ShelfNode>()
+        activity.contentResolver.query(
+            uri,
+            arrayOf(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE,
+            ),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            val idColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+            val nameColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+            val mimeColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+            while (cursor.moveToNext()) {
+                val id = cursor.getString(idColumn) ?: continue
+                val name = cursor.getString(nameColumn) ?: "Untitled"
+                val mime = cursor.getString(mimeColumn).orEmpty()
+                val directory = mime == DocumentsContract.Document.MIME_TYPE_DIR
+                val kind = when {
+                    directory -> "folder"
+                    mime.startsWith("image/") -> "image"
+                    mime.startsWith("audio/") -> "audio"
+                    mime.startsWith("text/") || name.endsWith(".md", true) || name.endsWith(".txt", true) -> "text"
+                    else -> "other"
+                }
+                rows += ShelfNode(id, name, directory, kind)
+            }
+        }
+        return rows.sortedWith(compareBy<ShelfNode> { !it.directory }.thenBy { it.name.lowercase() })
+    }
+
+    private fun documentName(tree: Uri, id: String): String {
+        val uri = DocumentsContract.buildDocumentUriUsingTree(tree, id)
+        activity.contentResolver.query(uri, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) return cursor.getString(0) ?: "Outside"
+        }
+        return "Outside"
+    }
 }
 
 private class AndroidSpeech(private val activity: MainActivity) : Speech {
