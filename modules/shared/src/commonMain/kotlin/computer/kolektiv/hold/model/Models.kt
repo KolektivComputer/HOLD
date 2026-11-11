@@ -171,18 +171,20 @@ data class PocketSettings(
     val reader: ReadProvider = ReadProvider(),
 )
 
+const val DEFAULT_READ_ENDPOINT = "https://api.deepseek.com/chat/completions"
+const val DEFAULT_READ_MODEL = "deepseek-flash"
+
 fun PocketSettings.reading(): ReadProvider {
+    val endpoint = reader.endpoint.ifBlank { DEFAULT_READ_ENDPOINT }
+    val model = reader.model.ifBlank { DEFAULT_READ_MODEL }
+    if (reader.kind == "off") return ReadProvider(kind = "off", endpoint = endpoint, model = model)
     val key = reader.key.ifBlank { deepseekKey }
-    return when (reader.kind) {
-        "off" -> reader.copy(key = key)
-        "custom" -> reader.copy(key = key)
-        else -> reader.copy(
-            kind = "deepseek",
-            key = key,
-            endpoint = reader.endpoint.ifBlank { "https://api.deepseek.com/chat/completions" },
-            model = reader.model.ifBlank { "deepseek-flash" },
-        )
-    }
+    return ReadProvider(
+        kind = if (key.isBlank()) "off" else "openai",
+        key = key,
+        endpoint = endpoint,
+        model = model,
+    )
 }
 
 @Serializable

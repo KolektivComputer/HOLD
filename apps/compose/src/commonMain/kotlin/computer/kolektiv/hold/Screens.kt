@@ -1263,10 +1263,9 @@ fun SyncScreen(controller: HoldController, poster: JsonPoster) {
     val reading = settings.reading()
     var baseUrl by remember(sync.baseUrl) { mutableStateOf(sync.baseUrl) }
     var token by remember(sync.token) { mutableStateOf(sync.token) }
-    var kind by remember(settings.reader.kind) { mutableStateOf(if (settings.reader.kind.isBlank()) "deepseek" else settings.reader.kind) }
     var key by remember(reading.key) { mutableStateOf(reading.key) }
-    var endpoint by remember(settings.reader.endpoint) { mutableStateOf(settings.reader.endpoint) }
-    var model by remember(settings.reader.model) { mutableStateOf(settings.reader.model) }
+    var endpoint by remember(reading.endpoint) { mutableStateOf(reading.endpoint) }
+    var model by remember(reading.model) { mutableStateOf(reading.model) }
     val scope = rememberCoroutineScope()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SettingsBack { controller.screen = "settings" }
@@ -1288,30 +1287,23 @@ fun SyncScreen(controller: HoldController, poster: JsonPoster) {
         }) { Text("Sync now") }
         Text("Reading", style = MaterialTheme.typography.titleMedium)
         Text(
-            "Read on a drawing sends that page to the provider below. The key stays on this device. Voice transcription does not use it. On Android, speech stays on the phone.",
+            "Read sends that page to an OpenAI-compatible endpoint. DeepSeek's is filled in. Leave the key empty and Read stays off. Voice stays on the phone either way.",
             color = HoldThemeColors.muted,
         )
-        Row(Modifier.horizontalScroll(rememberScrollState())) {
-            listOf("off" to "Off", "deepseek" to "DeepSeek", "custom" to "Custom").forEach { (id, label) ->
-                TextButton(onClick = { kind = id }) { Text(if (kind == id) label.uppercase() else label) }
-            }
-        }
-        if (kind != "off") {
-            OutlinedTextField(key, { key = it }, label = { Text("Key, on this device") }, modifier = Modifier.fillMaxWidth())
-        }
-        if (kind == "custom") {
-            OutlinedTextField(endpoint, { endpoint = it }, label = { Text("https endpoint") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(model, { model = it }, label = { Text("Model") }, modifier = Modifier.fillMaxWidth())
-            Text("Custom means any OpenAI-style chat completions API that accepts an image.", color = HoldThemeColors.muted)
-        } else if (kind == "deepseek") {
-            Text("DeepSeek reads handwriting and screenshots. It is not used for voice.", color = HoldThemeColors.muted)
-        }
+        OutlinedTextField(key, { key = it }, label = { Text("Key, on this device") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(endpoint, { endpoint = it }, label = { Text("Endpoint") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(model, { model = it }, label = { Text("Model") }, modifier = Modifier.fillMaxWidth())
         TextButton(onClick = {
             val storedKey = key.trim()
             controller.updateSettings(
                 settings.copy(
-                    deepseekKey = if (kind == "deepseek") storedKey else settings.deepseekKey,
-                    reader = settings.reader.copy(kind = kind, key = storedKey, endpoint = endpoint.trim(), model = model.trim()),
+                    deepseekKey = storedKey,
+                    reader = settings.reader.copy(
+                        kind = if (storedKey.isEmpty()) "off" else "openai",
+                        key = storedKey,
+                        endpoint = endpoint.trim(),
+                        model = model.trim(),
+                    ),
                 ),
             )
             controller.status = "Reading settings saved on this device."
