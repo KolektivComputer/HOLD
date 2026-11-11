@@ -1,0 +1,11 @@
+.gradle/
+build/
+.idea/
+.kotlin/
+*.iml
+local.properties
+.DS_Store
+apps/web/node_modules/
+apps/web/dist/
+xcuserdata/
+*.xcuserstate

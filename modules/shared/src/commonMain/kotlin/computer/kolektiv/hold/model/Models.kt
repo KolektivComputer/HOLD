@@ -1,0 +1,124 @@
+package computer.kolektiv.hold.model
+
+import kotlin.time.Clock
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
+interface Stamp {
+    val id: String
+    val updatedAt: Long
+    val deletedAt: Long?
+    val dirty: Boolean
+    val syncedAt: Long?
+}
+
+@Serializable
+sealed interface Payload {
+    @Serializable
+    @SerialName("note")
+    data object Note : Payload
+
+    @Serializable
+    @SerialName("number")
+    data class Phone(val phone: String) : Payload
+
+    @Serializable
+    @SerialName("voice")
+    data class Voice(
+        val durationMs: Long = 0,
+        val transcript: String = "",
+        val hasAudio: Boolean = false,
+        val mime: String = "",
+    ) : Payload
+
+    @Serializable
+    @SerialName("radio")
+    data class Radio(
+        val protocol: String,
+        val uid: String = "",
+        val frequencyHz: Long? = null,
+        val filetype: String = "",
+        val raw: String = "",
+    ) : Payload
+
+    @Serializable
+    @SerialName("health")
+    data class Health(
+        val metric: String,
+        val value: Double,
+        val unit: String = "",
+        val source: String = "manual",
+        val recordedAt: Long,
+    ) : Payload
+
+    @Serializable
+    @SerialName("place")
+    data class Place(val lat: Double? = null, val lon: Double? = null) : Payload
+}
+
+@Serializable
+data class Entry(
+    override val id: String,
+    val kind: String,
+    val title: String,
+    val body: String = "",
+    val createdAt: Long,
+    override val updatedAt: Long,
+    val categoryId: String? = null,
+    val tagIds: List<String> = emptyList(),
+    val pinned: Boolean = false,
+    override val deletedAt: Long? = null,
+    override val dirty: Boolean = false,
+    override val syncedAt: Long? = null,
+    val deviceId: String = "",
+    val payload: Payload,
+) : Stamp
+
+@Serializable
+data class NamedItem(
+    override val id: String,
+    val name: String,
+    override val updatedAt: Long,
+    override val deletedAt: Long? = null,
+    override val dirty: Boolean = false,
+    override val syncedAt: Long? = null,
+) : Stamp
+
+@Serializable
+data class SavedView(
+    override val id: String,
+    val name: String,
+    val kinds: List<String> = emptyList(),
+    val tagIds: List<String> = emptyList(),
+    val categoryId: String? = null,
+    val query: String = "",
+    override val updatedAt: Long,
+    override val deletedAt: Long? = null,
+    override val dirty: Boolean = false,
+    override val syncedAt: Long? = null,
+) : Stamp
+
+@Serializable
+data class SyncConfig(
+    val baseUrl: String = "",
+    val token: String = "",
+    val deviceName: String = "This pocket",
+    val deviceId: String = "",
+    val lastCursor: String? = null,
+    val lastSyncAt: Long? = null,
+    val lastError: String? = null,
+)
+
+@Serializable
+data class Snapshot(
+    val entries: List<Entry> = emptyList(),
+    val categories: List<NamedItem> = emptyList(),
+    val tags: List<NamedItem> = emptyList(),
+    val views: List<SavedView> = emptyList(),
+    val sync: SyncConfig = SyncConfig(),
+)
+
+fun nowMillis(): Long = Clock.System.now().toEpochMilliseconds()
+
+fun newId(): String =
+    "id_${kotlin.random.Random.nextLong().toULong().toString(16)}${nowMillis().toString(16)}"
