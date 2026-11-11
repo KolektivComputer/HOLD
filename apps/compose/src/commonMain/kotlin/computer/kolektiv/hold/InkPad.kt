@@ -165,13 +165,6 @@ fun InkEditor(
                 if (onRead != null) TextButton(onClick = onRead) { Text("Read") }
             }
         }
-        if (taken != null && edited != null) {
-            Text(
-                "Taken ${formatStamp(taken)}   Edited ${formatStamp(edited)}",
-                color = HoldThemeColors.muted,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 52.dp),
-            )
-        }
         Column(
             Modifier
                 .align(Alignment.BottomCenter)
@@ -198,6 +191,7 @@ fun InkEditor(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     OutlinedTextField(title, onTitle, label = { Text("Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    if (taken != null && edited != null) StampBoth(taken, edited)
                     LocateRow(locate, onLocate)
                     TagEditor(tagIds, tags, onTags, onCreateTag)
                 }
