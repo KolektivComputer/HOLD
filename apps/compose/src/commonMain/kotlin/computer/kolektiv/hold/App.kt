@@ -45,17 +45,26 @@ fun interface JsonPoster {
     fun post(url: String, body: String, token: String): String
 }
 
+data class CatchResult(
+    val transcript: String = "",
+    val audio: ByteArray? = null,
+    val mime: String = "",
+    val durationMs: Long = 0,
+)
+
 interface Speech {
-    fun listen(onPartial: (String) -> Unit, onFinal: (String) -> Unit, onError: (String) -> Unit)
-    fun stop()
+    fun listen(onPartial: (String) -> Unit, onError: (String) -> Unit)
+    fun stop(onDone: (CatchResult) -> Unit)
 }
 
 object NoSpeech : Speech {
-    override fun listen(onPartial: (String) -> Unit, onFinal: (String) -> Unit, onError: (String) -> Unit) {
+    override fun listen(onPartial: (String) -> Unit, onError: (String) -> Unit) {
         onError("This runtime can't listen yet. Type it under Write.")
     }
 
-    override fun stop() = Unit
+    override fun stop(onDone: (CatchResult) -> Unit) {
+        onDone(CatchResult())
+    }
 }
 
 data class CaptureRequest(val kind: String, val text: String)
@@ -241,7 +250,7 @@ fun HoldApp(
                     when {
                         selected != null -> DetailScreen(selected, controller, ports, poster)
                         controller.screen == "write" -> WriteScreen(controller, ports)
-                        controller.screen == "voice" -> VoiceScreen(controller, speech)
+                        controller.screen == "voice" -> VoiceScreen(controller, speech, ports)
                         controller.screen == "library" -> LibraryScreen(controller, poster, ports)
                         else -> LogScreen(controller)
                     }
@@ -255,7 +264,7 @@ internal suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { b
 
 fun summary(entry: Entry): String = when (val payload = entry.payload) {
     is Payload.Phone -> payload.phone
-    is Payload.Voice -> payload.transcript.ifBlank { "Voice" }
+    is Payload.Voice -> payload.transcript.ifBlank { if (payload.hasAudio) "Voice recording" else "Voice" }
     is Payload.Radio -> listOf(payload.protocol.uppercase(), payload.uid).filter { it.isNotBlank() }.joinToString(" · ")
     is Payload.Health -> "${payload.value} ${payload.unit}".trim()
     is Payload.Place -> {

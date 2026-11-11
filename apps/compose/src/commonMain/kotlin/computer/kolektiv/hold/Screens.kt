@@ -458,41 +458,54 @@ private fun PlaceMap(lat: Double?, lon: Double?, ports: PocketPorts, onPick: (Do
 }
 
 @Composable
-fun VoiceScreen(controller: HoldController, speech: Speech) {
+fun VoiceScreen(controller: HoldController, speech: Speech, ports: PocketPorts) {
     var heard by remember { mutableStateOf("") }
-    var note by remember { mutableStateOf("Tap once. Talk. Tap again to file it.") }
+    var note by remember { mutableStateOf("Tap once. It will ask for the microphone, record, then write down what it heard.") }
     var listening by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(note)
         Text(heard.ifBlank { "…" })
         Button(onClick = {
             if (listening) {
-                speech.stop()
                 listening = false
-                if (heard.isBlank()) {
-                    note = "Nothing to file."
-                    return@Button
+                note = "Saving…"
+                speech.stop { result ->
+                    val text = result.transcript.ifBlank { heard }.trim()
+                    if (text.isBlank() && result.audio == null) {
+                        note = "Nothing to file."
+                        return@stop
+                    }
+                    val now = nowMillis()
+                    val id = newId()
+                    if (result.audio != null) ports.saveBlob(id, result.audio)
+                    controller.save(
+                        Entry(
+                            id = id,
+                            kind = "voice",
+                            title = text.ifBlank { "Voice" }.take(80),
+                            createdAt = now,
+                            updatedAt = now,
+                            deviceId = controller.snapshot.sync.deviceId,
+                            payload = Payload.Voice(
+                                durationMs = result.durationMs,
+                                transcript = text,
+                                hasAudio = result.audio != null,
+                                mime = result.mime,
+                            ),
+                        ),
+                    )
+                    note = if (text.isBlank()) "Saved the recording. No transcript came back." else "Saved on this device."
+                    heard = ""
                 }
-                val now = nowMillis()
-                controller.save(
-                    Entry(
-                        id = newId(),
-                        kind = "voice",
-                        title = heard.take(80),
-                        createdAt = now,
-                        updatedAt = now,
-                        deviceId = controller.snapshot.sync.deviceId,
-                        payload = Payload.Voice(transcript = heard),
-                    ),
-                )
-                note = "Saved on this device."
-                heard = ""
             } else {
                 listening = true
-                note = "Listening"
+                heard = ""
+                note = "Recording"
                 speech.listen(
-                    onPartial = { heard = it },
-                    onFinal = { heard = it },
+                    onPartial = {
+                        heard = it
+                        note = "Recording"
+                    },
                     onError = {
                         listening = false
                         note = it

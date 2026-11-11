@@ -6,7 +6,9 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.media.MediaRecorder
 import android.os.Bundle
+import android.os.Handler
 import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -17,7 +19,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import computer.kolektiv.hold.geo.nominatimAddress
 import computer.kolektiv.hold.store.JsonHoldRepository
@@ -31,6 +32,8 @@ class MainActivity : ComponentActivity() {
     private var pictureError: ((String) -> Unit)? = null
     private var whenLocated: (() -> Unit)? = null
     private var locationRefused: (() -> Unit)? = null
+    private var whenMic: (() -> Unit)? = null
+    private var micRefused: (() -> Unit)? = null
 
     private val pickPicture = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) {
@@ -45,12 +48,13 @@ class MainActivity : ComponentActivity() {
         if (granted.values.any { it }) whenLocated?.invoke() else locationRefused?.invoke()
     }
 
+    private val askMic = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) whenMic?.invoke() else micRefused?.invoke()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         captureState.value = captureOf(intent)
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 21)
-        }
         val file = File(filesDir, "hold.json")
         val repository = JsonHoldRepository(
             read = { file.takeIf { it.exists() }?.readText() },
@@ -91,6 +95,16 @@ class MainActivity : ComponentActivity() {
         whenLocated = onGranted
         locationRefused = onDenied
         askLocation.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+    }
+
+    internal fun ensureMic(onGranted: () -> Unit, onDenied: () -> Unit) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            onGranted()
+            return
+        }
+        whenMic = onGranted
+        micRefused = onDenied
+        askMic.launch(Manifest.permission.RECORD_AUDIO)
     }
 
     internal fun choosePicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit) {
@@ -192,28 +206,116 @@ private class AndroidPorts(private val activity: MainActivity) : PocketPorts {
     private fun safe(id: String) = id.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.ifBlank { "blob" }
 }
 
-private class AndroidSpeech(private val activity: ComponentActivity) : Speech {
+private class AndroidSpeech(private val activity: MainActivity) : Speech {
     private var recognizer: SpeechRecognizer? = null
+    private var recorder: MediaRecorder? = null
+    private var file: File? = null
+    private var mime = "audio/mp4"
+    private var startedAt = 0L
+    private var transcript = ""
+    private var onDone: ((CatchResult) -> Unit)? = null
+    private var delivered = false
+    private val handler = Handler(Looper.getMainLooper())
 
-    override fun listen(onPartial: (String) -> Unit, onFinal: (String) -> Unit, onError: (String) -> Unit) {
-        if (!SpeechRecognizer.isRecognitionAvailable(activity)) {
-            onError("Speech recognition isn't on this device.")
+    override fun listen(onPartial: (String) -> Unit, onError: (String) -> Unit) {
+        activity.ensureMic(
+            onGranted = { begin(onPartial, onError) },
+            onDenied = { onError("Microphone permission was refused.") },
+        )
+    }
+
+    private fun begin(onPartial: (String) -> Unit, onError: (String) -> Unit) {
+        val started = startRecorder()
+        if (started == null) {
+            onError("Couldn't open the microphone.")
             return
         }
-        val rec = SpeechRecognizer.createSpeechRecognizer(activity)
+        recorder = started.first
+        file = started.second
+        mime = started.third
+        startedAt = System.currentTimeMillis()
+        transcript = ""
+        delivered = false
+        onDone = null
+        startRecognizer(onPartial)
+    }
+
+    override fun stop(onDone: (CatchResult) -> Unit) {
+        this.onDone = onDone
+        val rec = recorder
+        recorder = null
+        try {
+            rec?.stop()
+        } catch (_: RuntimeException) {
+            // An empty clip throws. The file is kept if any audio landed.
+        }
+        rec?.release()
+        recognizer?.stopListening()
+        handler.postDelayed({ finish() }, 900)
+    }
+
+    private fun finish() {
+        if (delivered) return
+        delivered = true
+        handler.removeCallbacksAndMessages(null)
+        recognizer?.destroy()
+        recognizer = null
+        val bytes = file?.takeIf { it.exists() && it.length() > 0L }?.readBytes()
+        file?.delete()
+        file = null
+        val duration = if (startedAt == 0L) 0L else (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
+        onDone?.invoke(CatchResult(transcript.trim(), bytes, if (bytes == null) "" else mime, duration))
+    }
+
+    private fun startRecorder(): Triple<MediaRecorder, File, String>? {
+        val dir = File(activity.filesDir, "voice").apply { mkdirs() }
+        val attempts = listOf(
+            Triple(MediaRecorder.OutputFormat.MPEG_4, MediaRecorder.AudioEncoder.AAC, "audio/mp4" to "m4a"),
+            Triple(MediaRecorder.OutputFormat.THREE_GPP, MediaRecorder.AudioEncoder.AMR_NB, "audio/3gpp" to "3gp"),
+        )
+        for ((format, encoder, kind) in attempts) {
+            val target = File(dir, "catch-${System.currentTimeMillis()}.${kind.second}")
+            val next = MediaRecorder()
+            try {
+                next.setAudioSource(MediaRecorder.AudioSource.MIC)
+                next.setOutputFormat(format)
+                next.setAudioEncoder(encoder)
+                next.setOutputFile(target.absolutePath)
+                next.prepare()
+                next.start()
+                return Triple(next, target, kind.first)
+            } catch (_: RuntimeException) {
+                next.release()
+                target.delete()
+            }
+        }
+        return null
+    }
+
+    private fun startRecognizer(onPartial: (String) -> Unit) {
+        if (!SpeechRecognizer.isRecognitionAvailable(activity)) return
+        val rec = runCatching { SpeechRecognizer.createSpeechRecognizer(activity) }.getOrNull() ?: return
         recognizer = rec
         rec.setRecognitionListener(object : RecognitionListener {
             override fun onResults(results: Bundle) {
-                onFinal(results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty())
+                val text = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+                if (text.isNotBlank()) {
+                    transcript = text
+                    onPartial(text)
+                }
+                if (onDone != null) finish()
             }
 
             override fun onPartialResults(partialResults: Bundle) {
                 val text = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
-                if (text.isNotBlank()) onPartial(text)
+                if (text.isNotBlank()) {
+                    transcript = text
+                    onPartial(text)
+                }
             }
 
             override fun onError(error: Int) {
-                onError("Couldn't hear that.")
+                if (onDone != null) finish()
             }
 
             override fun onReadyForSpeech(params: Bundle) = Unit
@@ -227,10 +329,6 @@ private class AndroidSpeech(private val activity: ComponentActivity) : Speech {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
-        rec.startListening(intent)
-    }
-
-    override fun stop() {
-        recognizer?.stopListening()
+        runCatching { rec.startListening(intent) }
     }
 }
