@@ -101,6 +101,9 @@ data class Entry(
     override val syncedAt: Long? = null,
     val deviceId: String = "",
     val type: String = "",
+    val lat: Double? = null,
+    val lon: Double? = null,
+    val accuracyM: Double? = null,
     val payload: Payload,
 ) : Stamp
 
@@ -140,11 +143,23 @@ data class SyncConfig(
 )
 
 @Serializable
+data class Palette(
+    override val id: String,
+    val name: String,
+    val colors: List<String> = emptyList(),
+    override val updatedAt: Long,
+    override val deletedAt: Long? = null,
+    override val dirty: Boolean = false,
+    override val syncedAt: Long? = null,
+) : Stamp
+
+@Serializable
 data class PocketSettings(
     val mode: String = "full",
     val follow: Boolean = false,
     val deepseekKey: String = "",
     val autoTranscribe: Boolean = true,
+    val quick: List<String> = listOf("text", "image", "audio", "place"),
 )
 
 @Serializable
@@ -163,13 +178,16 @@ val BUILTIN_TAGS = listOf(
     "tag_discord" to "discord",
     "tag_x" to "x",
     "tag_fluxer" to "fluxer",
+    "tag_drawing" to "drawing",
+    "tag_voice" to "voice recording",
 )
 
 fun Entry.medium(): String = when (type) {
-    "audio", "ink", "text" -> type
+    "audio", "image", "text" -> type
+    "ink" -> "image"
     else -> when (val body = payload) {
         is Payload.Voice -> "audio"
-        is Payload.Note -> if (body.ink.isNotEmpty() || body.shotId != null) "ink" else "text"
+        is Payload.Note -> if (body.ink.isNotEmpty() || body.shotId != null) "image" else "text"
         else -> "text"
     }
 }
@@ -180,6 +198,7 @@ data class Snapshot(
     val categories: List<NamedItem> = emptyList(),
     val tags: List<NamedItem> = emptyList(),
     val views: List<SavedView> = emptyList(),
+    val palettes: List<Palette> = emptyList(),
     val sync: SyncConfig = SyncConfig(),
     val settings: PocketSettings = PocketSettings(),
     val trail: List<Fix> = emptyList(),

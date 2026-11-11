@@ -7,11 +7,11 @@ interface PocketPorts {
 
     fun watch(onFix: (lat: Double, lon: Double, accuracyM: Double?) -> Unit): () -> Unit = { }
 
-    fun pickPicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit) {
+    fun pickPicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit, deleteAfter: Boolean = false) {
         onError("This build can't open pictures yet.")
     }
 
-    fun takePicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit) {
+    fun takePicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit, deleteAfter: Boolean = false) {
         onError("This build can't use the camera yet.")
     }
 

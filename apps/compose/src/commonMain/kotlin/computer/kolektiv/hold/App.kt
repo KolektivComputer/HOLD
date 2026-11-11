@@ -1,24 +1,41 @@
 package computer.kolektiv.hold
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import computer.kolektiv.hold.geo.haversineMeters
 import computer.kolektiv.hold.geo.plusCode
@@ -47,6 +64,7 @@ import computer.kolektiv.hold.parse.spotText
 import computer.kolektiv.hold.store.HoldRepository
 import computer.kolektiv.hold.sync.pushSync
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 fun interface JsonPoster {
@@ -99,6 +117,7 @@ class NoteDraft {
     var shot by mutableStateOf<ByteArray?>(null)
     var medium by mutableStateOf("text")
     var tagIds by mutableStateOf<List<String>>(emptyList())
+    var locate by mutableStateOf(false)
 
     fun clear() {
         title = ""
@@ -113,6 +132,7 @@ class NoteDraft {
         shotId = null
         shot = null
         tagIds = emptyList()
+        locate = false
     }
 }
 
@@ -124,7 +144,9 @@ class HoldController(private val repository: HoldRepository) {
     var status by mutableStateOf("")
     var tool by mutableStateOf("pen")
     var ink by mutableStateOf(INK_COLORS.first())
+    var swatches by mutableStateOf(INK_COLORS)
     var shotSource by mutableStateOf("")
+    var deleteImport by mutableStateOf(false)
     val draft = NoteDraft()
 
     private fun initial(): Snapshot {
@@ -232,8 +254,52 @@ class HoldController(private val repository: HoldRepository) {
         val transcript = (entry.payload as? Payload.Voice)?.transcript.orEmpty()
         val text = listOf(entry.title, entry.body, phone, transcript).joinToString("\n")
         val ids = spotText(text).mapNotNull { spot -> BUILTIN_TAGS.find { it.second == spot.kind }?.first }
-        if (ids.isEmpty()) return entry
-        return entry.copy(tagIds = (entry.tagIds + ids).distinct())
+        val tools = buildList {
+            addAll(ids)
+            if (entry.medium() == "audio") add("tag_voice")
+            val note = entry.payload as? Payload.Note
+            if (note != null && note.ink.isNotEmpty()) add("tag_drawing")
+        }
+        if (tools.isEmpty()) return entry
+        return entry.copy(tagIds = (entry.tagIds + tools).distinct())
+    }
+
+    fun renameTag(id: String, name: String) {
+        val clean = name.trim()
+        if (clean.isEmpty()) return
+        snapshot = snapshot.copy(tags = snapshot.tags.map {
+            if (it.id == id) it.copy(name = clean, updatedAt = nowMillis(), dirty = true) else it
+        })
+        repository.save(snapshot)
+    }
+
+    fun deleteTag(id: String) {
+        snapshot = snapshot.copy(tags = snapshot.tags.map {
+            if (it.id == id) it.copy(deletedAt = nowMillis(), updatedAt = nowMillis(), dirty = true) else it
+        })
+        repository.save(snapshot)
+    }
+
+    fun savePalette(name: String, colors: List<String>) {
+        val clean = colors.map { it.trim() }.filter { it.startsWith("#") && it.length >= 4 }.distinct()
+        if (clean.isEmpty()) return
+        val item = computer.kolektiv.hold.model.Palette(
+            id = newId(),
+            name = name.trim().ifBlank { "Palette" },
+            colors = clean,
+            updatedAt = nowMillis(),
+            dirty = true,
+        )
+        snapshot = snapshot.copy(palettes = snapshot.palettes + item)
+        repository.save(snapshot)
+        status = "Saved ${item.name}."
+    }
+
+    fun deletePalette(id: String) {
+        snapshot = snapshot.copy(palettes = snapshot.palettes.map {
+            if (it.id == id) it.copy(deletedAt = nowMillis(), updatedAt = nowMillis(), dirty = true) else it
+        })
+        repository.save(snapshot)
     }
 
     fun addHandle(id: String, kind: String, value: String) {
@@ -255,6 +321,7 @@ class HoldController(private val repository: HoldRepository) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HoldApp(
     repository: HoldRepository,
@@ -299,9 +366,9 @@ fun HoldApp(
         controller.draft.clear()
         when (action) {
             "audio" -> controller.screen = "voice"
-            "ink" -> {
+            "image", "ink" -> {
                 controller.draft.kind = "note"
-                controller.draft.medium = "ink"
+                controller.draft.medium = "image"
                 controller.screen = "write"
             }
             "place" -> {
@@ -325,45 +392,97 @@ fun HoldApp(
         val selected = controller.selected()
         val sheet = selected != null || controller.screen == "write" || controller.screen == "voice"
         val onLog = !sheet && controller.screen == "log"
+        val drawer = rememberDrawerState(DrawerValue.Closed)
+        val scope = rememberCoroutineScope()
+        var wipe by remember { mutableStateOf(false) }
+        val page = when (controller.screen) {
+            "library" -> "Library"
+            "settings" -> "Settings"
+            else -> if (controller.snapshot.settings.mode == "thin") "Log · thin" else "Log"
+        }
         Box(Modifier.fillMaxSize()) {
-            Scaffold(
-                containerColor = HoldThemeColors.bg,
-                floatingActionButton = {
-                    if (onLog) {
-                        HoldFab(fabOpen, { fabOpen = !fabOpen }) { action ->
-                            if (action == "ink") askInk = true else openSheet(action)
-                        }
+            ModalNavigationDrawer(
+                drawerState = drawer,
+                gesturesEnabled = false,
+                drawerContent = {
+                    ModalDrawerSheet(drawerContainerColor = HoldThemeColors.surface) {
+                        Text("HOLD", modifier = Modifier.padding(16.dp), style = androidx.compose.material3.MaterialTheme.typography.titleLarge)
+                        NavigationDrawerItem(
+                            label = { Text("Library") },
+                            selected = controller.screen == "library",
+                            onClick = {
+                                controller.selectedId = null
+                                controller.screen = "library"
+                                scope.launch { drawer.close() }
+                            },
+                        )
+                        NavigationDrawerItem(
+                            label = { Text("Settings") },
+                            selected = controller.screen == "settings",
+                            onClick = {
+                                controller.selectedId = null
+                                controller.screen = "settings"
+                                scope.launch { drawer.close() }
+                            },
+                        )
                     }
                 },
-                bottomBar = {
-                    NavigationBar(containerColor = HoldThemeColors.bg) {
-                        listOf("log" to ("Log" to HoldIcons.List), "library" to ("Library" to HoldIcons.Library)).forEach { (id, item) ->
+            ) {
+                Scaffold(
+                    containerColor = HoldThemeColors.bg,
+                    topBar = {
+                        TopAppBar(
+                            colors = TopAppBarDefaults.topAppBarColors(
+                                containerColor = HoldThemeColors.bg,
+                                titleContentColor = HoldThemeColors.fg,
+                            ),
+                            navigationIcon = {
+                                Box(
+                                    Modifier
+                                        .padding(start = 12.dp)
+                                        .size(28.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(HoldThemeColors.accent)
+                                        .clickable { scope.launch { drawer.open() } },
+                                    contentAlignment = Alignment.Center,
+                                ) { Text("H", color = HoldThemeColors.bg) }
+                            },
+                            title = { Text(page) },
+                        )
+                    },
+                    floatingActionButton = {
+                        if (onLog) {
+                            HoldFab(controller.snapshot.settings.quick, fabOpen, { fabOpen = !fabOpen }) { action ->
+                                if (action == "image") askInk = true else openSheet(action)
+                            }
+                        }
+                    },
+                    bottomBar = {
+                        NavigationBar(containerColor = HoldThemeColors.bg) {
                             NavigationBarItem(
-                                selected = controller.screen == id && !sheet,
+                                selected = controller.screen == "log" && !sheet,
                                 onClick = {
                                     controller.selectedId = null
-                                    controller.screen = id
+                                    controller.screen = "log"
                                     fabOpen = false
                                 },
-                                label = { Text(item.first) },
-                                icon = { Icon(item.second, item.first, tint = HoldThemeColors.fg) },
+                                label = { Text("Log") },
+                                icon = { Icon(HoldIcons.List, "Log", tint = HoldThemeColors.fg) },
                             )
                         }
-                    }
-                },
-            ) { padding ->
-                Column(Modifier.fillMaxSize().padding(padding)) {
-                    Text(
-                        if (controller.snapshot.settings.mode == "thin") "HOLD · thin" else "HOLD",
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
-                    )
-                    if (controller.status.isNotBlank()) {
-                        Text(controller.status, color = HoldThemeColors.muted, modifier = Modifier.padding(horizontal = 16.dp))
-                    }
-                    Box(Modifier.weight(1f).padding(horizontal = 16.dp)) {
-                        if (controller.screen == "library" && selected == null) LibraryScreen(controller, poster, ports)
-                        else LogScreen(controller, ports)
+                    },
+                ) { padding ->
+                    Column(Modifier.fillMaxSize().padding(padding)) {
+                        if (controller.status.isNotBlank()) {
+                            Text(controller.status, color = HoldThemeColors.muted, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                        }
+                        Box(Modifier.weight(1f).padding(horizontal = if (controller.screen == "log") 0.dp else 16.dp)) {
+                            when {
+                                controller.screen == "library" && selected == null -> LibraryScreen(controller, poster, ports)
+                                controller.screen == "settings" && selected == null -> SettingsScreen(controller, poster)
+                                else -> LogScreen(controller, ports)
+                            }
+                        }
                     }
                 }
             }
@@ -371,7 +490,7 @@ fun HoldApp(
                 EntrySheet(onDismiss = {
                     controller.selectedId = null
                     controller.draft.clear()
-                    if (controller.screen != "library") controller.screen = "log"
+                    if (controller.screen != "library" && controller.screen != "settings") controller.screen = "log"
                 }) {
                     when {
                         selected != null -> DetailScreen(selected, controller, ports, poster, speech)
@@ -385,24 +504,34 @@ fun HoldApp(
             AlertDialog(
                 onDismissRequest = { askInk = false },
                 containerColor = HoldThemeColors.bg,
-                title = { Text("Ink") },
-                text = { Text("Start with a blank page, or draw on a photo.") },
+                title = { Text("Image") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Start with a blank page, or draw on a photo.")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = wipe, onCheckedChange = { wipe = it })
+                            Text("Delete the original. Only HOLD keeps it.")
+                        }
+                    }
+                },
                 confirmButton = {
                     TextButton(onClick = {
                         askInk = false
-                        openSheet("ink")
+                        openSheet("image")
                     }) { Text("Blank page") }
                 },
                 dismissButton = {
                     Row {
                         TextButton(onClick = {
                             askInk = false
-                            openSheet("ink")
+                            controller.deleteImport = wipe
+                            openSheet("image")
                             controller.shotSource = "camera"
                         }) { Text("Camera") }
                         TextButton(onClick = {
                             askInk = false
-                            openSheet("ink")
+                            controller.deleteImport = wipe
+                            openSheet("image")
                             controller.shotSource = "library"
                         }) { Text("Library") }
                     }
@@ -430,7 +559,7 @@ fun summary(entry: Entry): String = when (val payload = entry.payload) {
         }
     }
     is Payload.Contact -> payload.handles.joinToString(" · ") { "${it.kind} ${it.value}" }.ifBlank { "Contact" }
-    is Payload.Note -> if (payload.ink.isNotEmpty()) "Ink" else entry.body
+    is Payload.Note -> if (payload.ink.isNotEmpty()) "Drawing" else if (payload.shotId != null) "Image" else entry.body
 }
 
 fun defaultTitle(kind: String, payload: Payload): String = when (payload) {

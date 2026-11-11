@@ -39,6 +39,8 @@ class MainActivity : ComponentActivity() {
     private var micRefused: (() -> Unit)? = null
     private var whenCamera: (() -> Unit)? = null
     private var cameraRefused: (() -> Unit)? = null
+    private var deleteAfter = false
+    private var shotFile: File? = null
     private var photoUri: Uri? = null
 
     private val pickPicture = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -116,19 +118,22 @@ class MainActivity : ComponentActivity() {
         askMic.launch(Manifest.permission.RECORD_AUDIO)
     }
 
-    internal fun choosePicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit) {
+    internal fun choosePicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit, deleteAfter: Boolean) {
         pictureBytes = onBytes
         pictureError = onError
+        this.deleteAfter = deleteAfter
         pickPicture.launch("image/*")
     }
 
-    internal fun takePicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit) {
+    internal fun takePicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit, deleteAfter: Boolean) {
         val launch = {
             val file = File(cacheDir, "shot-${System.currentTimeMillis()}.jpg")
+            shotFile = file
             val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
             photoUri = uri
             pictureBytes = onBytes
             pictureError = onError
+            this.deleteAfter = deleteAfter
             takeShot.launch(uri)
         }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -146,7 +151,16 @@ class MainActivity : ComponentActivity() {
             return
         }
         val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-        if (bytes == null) pictureError?.invoke("Couldn't read that picture.") else pictureBytes?.invoke(bytes)
+        shotFile?.delete()
+        shotFile = null
+        if (bytes == null) {
+            pictureError?.invoke("Couldn't read that picture.")
+            return
+        }
+        pictureBytes?.invoke(bytes)
+        if (!deleteAfter) return
+        val removed = runCatching { contentResolver.delete(uri, null, null) }.getOrDefault(0)
+        if (removed == 0) pictureError?.invoke("Saved in HOLD. The original could not be deleted.")
     }
 }
 
@@ -219,12 +233,12 @@ private class AndroidPorts(private val activity: MainActivity) : PocketPorts {
         return { manager.removeUpdates(listener) }
     }
 
-    override fun pickPicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit) {
-        activity.choosePicture(onBytes, onError)
+    override fun pickPicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit, deleteAfter: Boolean) {
+        activity.choosePicture(onBytes, onError, deleteAfter)
     }
 
-    override fun takePicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit) {
-        activity.takePicture(onBytes, onError)
+    override fun takePicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit, deleteAfter: Boolean) {
+        activity.takePicture(onBytes, onError, deleteAfter)
     }
 
     override fun saveBlob(id: String, bytes: ByteArray) {

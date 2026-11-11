@@ -46,13 +46,18 @@ private class DesktopPorts(private val root: File) : PocketPorts {
     private val blobs = File(root, "blobs")
     private val tiles = File(root, "tiles")
 
-    override fun pickPicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit) {
+    override fun pickPicture(onBytes: (ByteArray) -> Unit, onError: (String) -> Unit, deleteAfter: Boolean) {
         Thread {
             val dialog = FileDialog(Frame(), "Picture", FileDialog.LOAD)
             dialog.isVisible = true
             val name = dialog.file
             val picked = if (name == null) null else File(dialog.directory, name)
-            if (picked == null || !picked.exists()) onError("No picture.") else onBytes(picked.readBytes())
+            if (picked == null || !picked.exists()) {
+                onError("No picture.")
+                return@Thread
+            }
+            onBytes(picked.readBytes())
+            if (deleteAfter && !picked.delete()) onError("Saved in HOLD. The original could not be deleted.")
         }.start()
     }
 

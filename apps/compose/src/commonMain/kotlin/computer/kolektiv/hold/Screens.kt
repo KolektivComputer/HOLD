@@ -6,14 +6,23 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.ui.platform.LocalDensity
+import kotlin.math.roundToInt
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -37,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -107,6 +117,7 @@ fun NotePage(
     onCreateTag: (String) -> Unit,
     onCommit: (String, String, List<String>) -> Unit,
     onDiscard: () -> Unit,
+    footer: @Composable () -> Unit = {},
 ) {
     var editing by remember { mutableStateOf(startEditing) }
     var header by remember { mutableStateOf(title) }
@@ -137,6 +148,7 @@ fun NotePage(
         } else {
             TagChips(tagIds, tags)
         }
+        footer()
         if (editing) {
             BasicTextField(
                 value = header,
@@ -192,36 +204,51 @@ private fun TagChips(selected: List<String>, tags: List<NamedItem>) {
 }
 
 @Composable
-private fun PhotoSourceDialog(onBlank: (() -> Unit)?, onCamera: () -> Unit, onLibrary: () -> Unit, onDismiss: () -> Unit) {
+private fun PhotoSourceDialog(
+    onBlank: (() -> Unit)?,
+    onCamera: (Boolean) -> Unit,
+    onLibrary: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var wipe by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = HoldThemeColors.bg,
-        title = { Text("Photo") },
-        text = { Text(if (onBlank == null) "Take a photo or choose one." else "Start blank, or draw on a photo.") },
+        title = { Text("Image") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(if (onBlank == null) "Take a photo or choose one." else "Start blank, or draw on a photo.")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = wipe, onCheckedChange = { wipe = it })
+                    Text("Delete the original. Only HOLD keeps it.")
+                }
+            }
+        },
         confirmButton = {
             if (onBlank != null) TextButton(onClick = onBlank) { Text("Blank page") }
-            else TextButton(onClick = onCamera) { Text("Camera") }
+            else TextButton(onClick = { onCamera(wipe) }) { Text("Camera") }
         },
         dismissButton = {
             Row {
-                if (onBlank != null) TextButton(onClick = onCamera) { Text("Camera") }
-                TextButton(onClick = onLibrary) { Text("Library") }
+                if (onBlank != null) TextButton(onClick = { onCamera(wipe) }) { Text("Camera") }
+                TextButton(onClick = { onLibrary(wipe) }) { Text("Library") }
             }
         },
     )
 }
 
 @Composable
-fun HoldFab(open: Boolean, onToggle: () -> Unit, onPick: (String) -> Unit) {
+fun HoldFab(actions: List<String>, open: Boolean, onToggle: () -> Unit, onPick: (String) -> Unit) {
+    val items = listOf(
+        Triple("text", HoldIcons.FileText, "Text"),
+        Triple("image", HoldIcons.PenLine, "Image"),
+        Triple("audio", HoldIcons.Mic, "Audio"),
+        Triple("place", HoldIcons.MapPin, "Place"),
+        Triple("radio", HoldIcons.Radio, "Radio"),
+    ).filter { it.first in actions }
     Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (open) {
-            listOf(
-                Triple("text", HoldIcons.FileText, "Text"),
-                Triple("ink", HoldIcons.PenLine, "Ink"),
-                Triple("audio", HoldIcons.Mic, "Audio"),
-                Triple("place", HoldIcons.MapPin, "Place"),
-                Triple("radio", HoldIcons.Radio, "Radio"),
-            ).forEach { (id, icon, label) ->
+            items.forEach { (id, icon, label) ->
                 Row(
                     Modifier
                         .clip(RoundedCornerShape(20.dp))
@@ -247,50 +274,96 @@ fun LogScreen(controller: HoldController, ports: PocketPorts) {
     var filter by remember { mutableStateOf("all") }
     var playing by remember { mutableStateOf<String?>(null) }
     val rows = controller.visible().filter { filter == "all" || it.medium() == filter }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 88.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 88.dp)) {
         if (isExampleSet(controller.snapshot.entries)) {
-            Text("These six are examples, so the pocket isn't empty.", color = HoldThemeColors.muted)
-            Button(onClick = { controller.clearExamples() }) { Text("Clear examples") }
+            Text("These six are examples, so the pocket isn't empty.", color = HoldThemeColors.muted, modifier = Modifier.padding(horizontal = 16.dp))
+            Button(onClick = { controller.clearExamples() }, modifier = Modifier.padding(horizontal = 16.dp)) { Text("Clear examples") }
         }
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf("all", "text", "ink", "audio").forEach { item ->
-                TextButton(onClick = { filter = item }) { Text(if (item == filter) item.uppercase() else item) }
+        Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            listOf("all", "text", "image", "audio").forEach { item ->
+                TextButton(onClick = { filter = item }) { Text(if (item == filter) item.replaceFirstChar { it.uppercase() } else item) }
             }
         }
-        if (rows.isEmpty()) Text("Nothing filed on this device.", color = HoldThemeColors.muted)
+        if (rows.isEmpty()) Text("Nothing filed on this device.", color = HoldThemeColors.muted, modifier = Modifier.padding(16.dp))
         rows.forEach { entry ->
             val voice = entry.payload as? Payload.Voice
             val names = entry.tagIds.mapNotNull { id -> controller.snapshot.tags.find { it.id == id && it.deletedAt == null }?.name }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f).clickable { controller.selectedId = entry.id }) {
-                    Text(entry.medium().uppercase(), color = HoldThemeColors.muted)
-                    Text(entry.title.ifBlank { "Untitled" })
-                    if (voice != null && voice.hasAudio) Waveform(voice.peaks)
-                    else {
-                        val line = summary(entry)
-                        if (line.isNotBlank()) Text(line, color = HoldThemeColors.muted)
-                    }
-                    if (names.isNotEmpty()) Text(names.joinToString(" · "), color = HoldThemeColors.accent)
-                }
-                if (voice?.hasAudio == true) {
-                    IconButton(onClick = {
-                        if (playing == entry.id) {
-                            ports.stopPlay()
-                            playing = null
-                            return@IconButton
+            SwipeItem(
+                onEdit = { controller.selectedId = entry.id },
+                onDelete = { controller.delete(entry.id) },
+            ) {
+                ListItem(
+                    colors = ListItemDefaults.colors(containerColor = HoldThemeColors.bg),
+                    overlineContent = { Text(entry.medium().replaceFirstChar { it.uppercase() }) },
+                    headlineContent = { Text(entry.title.ifBlank { "Untitled" }) },
+                    supportingContent = {
+                        Column {
+                            if (voice != null && voice.hasAudio) Waveform(voice.peaks)
+                            else {
+                                val line = summary(entry)
+                                if (line.isNotBlank()) Text(line)
+                            }
+                            if (names.isNotEmpty()) Text(names.joinToString(" · "), color = HoldThemeColors.accent)
+                            if (entry.lat != null) Text("Place saved", color = HoldThemeColors.muted)
                         }
-                        if (ports.loadBlob(entry.id) == null) {
-                            controller.status = "That recording isn't on this device."
-                            return@IconButton
+                    },
+                    trailingContent = {
+                        if (voice?.hasAudio == true) {
+                            IconButton(onClick = {
+                                if (playing == entry.id) {
+                                    ports.stopPlay()
+                                    playing = null
+                                    return@IconButton
+                                }
+                                if (ports.loadBlob(entry.id) == null) {
+                                    controller.status = "That recording isn't on this device."
+                                    return@IconButton
+                                }
+                                playing = entry.id
+                                ports.play(entry.id) { playing = null }
+                            }) {
+                                Icon(if (playing == entry.id) HoldIcons.Pause else HoldIcons.Play, "Play", tint = HoldThemeColors.fg)
+                            }
                         }
-                        playing = entry.id
-                        ports.play(entry.id) { playing = null }
-                    }) {
-                        Icon(if (playing == entry.id) HoldIcons.Pause else HoldIcons.Play, "Play", tint = HoldThemeColors.fg)
-                    }
-                }
+                    },
+                    modifier = Modifier.clickable { controller.selectedId = entry.id },
+                )
+            }
+            HorizontalDivider(color = HoldThemeColors.fg.copy(alpha = 0.12f))
+        }
+    }
+}
+
+@Composable
+private fun SwipeItem(onEdit: () -> Unit, onDelete: () -> Unit, content: @Composable () -> Unit) {
+    val density = LocalDensity.current
+    val reveal = with(density) { 156.dp.toPx() }
+    var offset by remember { mutableStateOf(0f) }
+    Box(Modifier.fillMaxWidth().clipToBounds()) {
+        Box(Modifier.matchParentSize(), contentAlignment = Alignment.CenterEnd) {
+            Row {
+                TextButton(onClick = {
+                    offset = 0f
+                    onEdit()
+                }) { Text("Edit") }
+                TextButton(onClick = {
+                    offset = 0f
+                    onDelete()
+                }) { Text("Delete") }
             }
         }
+        Box(
+            Modifier
+                .offset { IntOffset(offset.roundToInt(), 0) }
+                .fillMaxWidth()
+                .background(HoldThemeColors.bg)
+                .pointerInput(reveal) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { _, drag -> offset = (offset + drag).coerceIn(-reveal, 0f) },
+                        onDragEnd = { offset = if (offset < -reveal / 2f) -reveal else 0f },
+                    )
+                },
+        ) { content() }
     }
 }
 
@@ -307,10 +380,10 @@ fun WriteScreen(controller: HoldController, ports: PocketPorts) {
         val source = controller.shotSource
         if (source.isBlank()) return@LaunchedEffect
         controller.shotSource = ""
-        if (source == "camera") ports.takePicture(::receiveShot) { controller.status = it }
-        else ports.pickPicture(::receiveShot) { controller.status = it }
+        if (source == "camera") ports.takePicture(::receiveShot, { controller.status = it }, controller.deleteImport)
+        else ports.pickPicture(::receiveShot, { controller.status = it }, controller.deleteImport)
     }
-    if (draft.kind == "note" && draft.medium == "ink") {
+    if (draft.kind == "note" && (draft.medium == "image" || draft.medium == "ink")) {
         val background = remember(draft.shot) { draft.shot?.let { decodePocketImage(it) } }
         key(draft.shotId ?: "ink") {
             InkEditor(
@@ -328,6 +401,33 @@ fun WriteScreen(controller: HoldController, ports: PocketPorts) {
                     val id = controller.addTag(name) ?: return@InkEditor
                     if (id !in draft.tagIds) draft.tagIds = draft.tagIds + id
                 },
+                title = draft.title,
+                onTitle = { draft.title = it },
+                colors = controller.swatches,
+                palettes = controller.snapshot.palettes,
+                onSavePalette = { name, colors ->
+                    controller.swatches = colors
+                    controller.savePalette(name, colors)
+                },
+                onUsePalette = { controller.swatches = it },
+                locate = draft.locate,
+                onLocate = { on ->
+                    draft.locate = on
+                    if (!on) {
+                        draft.lat = null
+                        draft.lon = null
+                        draft.accuracy = null
+                    } else {
+                        ports.here(
+                            { lat, lon, accuracy ->
+                                draft.lat = lat
+                                draft.lon = lon
+                                draft.accuracy = accuracy
+                            },
+                            { controller.status = it },
+                        )
+                    }
+                },
                 onSave = { fileDraft(controller, ports) },
                 onDiscard = dismiss,
                 onOpenImage = { askPhoto = true },
@@ -335,12 +435,12 @@ fun WriteScreen(controller: HoldController, ports: PocketPorts) {
             )
         }
         if (askPhoto) {
-            PhotoSourceDialog(onBlank = null, onCamera = {
+            PhotoSourceDialog(onBlank = null, onCamera = { wipe ->
                 askPhoto = false
-                ports.takePicture(::receiveShot) { controller.status = it }
-            }, onLibrary = {
+                ports.takePicture(::receiveShot, { controller.status = it }, wipe)
+            }, onLibrary = { wipe ->
                 askPhoto = false
-                ports.pickPicture(::receiveShot) { controller.status = it }
+                ports.pickPicture(::receiveShot, { controller.status = it }, wipe)
             }, onDismiss = { askPhoto = false })
         }
         return
@@ -364,6 +464,25 @@ fun WriteScreen(controller: HoldController, ports: PocketPorts) {
                 fileDraft(controller, ports)
             },
             onDiscard = dismiss,
+            footer = {
+                LocateRow(draft.locate) { on ->
+                    draft.locate = on
+                    if (!on) {
+                        draft.lat = null
+                        draft.lon = null
+                        draft.accuracy = null
+                    } else {
+                        ports.here(
+                            { lat, lon, accuracy ->
+                                draft.lat = lat
+                                draft.lon = lon
+                                draft.accuracy = accuracy
+                            },
+                            { controller.status = it },
+                        )
+                    }
+                }
+            },
         )
         return
     }
@@ -400,6 +519,23 @@ fun WriteScreen(controller: HoldController, ports: PocketPorts) {
             if (id !in draft.tagIds) draft.tagIds = draft.tagIds + id
         }
         SpotRow("${draft.title}\n${draft.body}\n${draft.extra}", controller)
+        LocateRow(draft.locate) { on ->
+            draft.locate = on
+            if (!on) {
+                draft.lat = null
+                draft.lon = null
+                draft.accuracy = null
+            } else {
+                ports.here(
+                    { lat, lon, accuracy ->
+                        draft.lat = lat
+                        draft.lon = lon
+                        draft.accuracy = accuracy
+                    },
+                    { controller.status = it },
+                )
+            }
+        }
         Button(onClick = { fileDraft(controller, ports) }) { Text("File it") }
     }
 }
@@ -492,7 +628,10 @@ private fun fileDraft(controller: HoldController, ports: PocketPorts) {
             updatedAt = now,
             deviceId = controller.snapshot.sync.deviceId,
             tagIds = draft.tagIds,
-            type = if (draft.kind == "note" && draft.medium == "ink") "ink" else "text",
+            type = if (draft.kind == "note" && (draft.medium == "image" || draft.medium == "ink")) "image" else if (payload is Payload.Voice) "audio" else "text",
+            lat = draft.lat,
+            lon = draft.lon,
+            accuracyM = draft.accuracy,
             payload = payload,
         ),
     )
@@ -513,9 +652,30 @@ fun DetailScreen(entry: Entry, controller: HoldController, ports: PocketPorts, p
     var shot by remember(entry.id) { mutableStateOf(shotId?.let { ports.loadBlob(it) }) }
     var askPhoto by remember(entry.id) { mutableStateOf(false) }
     var playing by remember(entry.id) { mutableStateOf(false) }
+    var locate by remember(entry.id) { mutableStateOf(entry.lat != null) }
+    var lat by remember(entry.id) { mutableStateOf(entry.lat) }
+    var lon by remember(entry.id) { mutableStateOf(entry.lon) }
+    var accuracy by remember(entry.id) { mutableStateOf(entry.accuracyM) }
+    fun pinPlace(on: Boolean) {
+        locate = on
+        if (!on) {
+            lat = null
+            lon = null
+            accuracy = null
+            return
+        }
+        ports.here(
+            { a, b, c ->
+                lat = a
+                lon = b
+                accuracy = c
+            },
+            { controller.status = it },
+        )
+    }
     val background = remember(shot) { shot?.let { decodePocketImage(it) } }
     val scope = rememberCoroutineScope()
-    if (entry.medium() == "ink" && note != null) {
+    if (entry.medium() == "image" && note != null) {
         key(entry.id) {
             InkEditor(
                 strokes = strokes,
@@ -532,14 +692,28 @@ fun DetailScreen(entry: Entry, controller: HoldController, ports: PocketPorts, p
                     val id = controller.addTag(name) ?: return@InkEditor
                     if (id !in tagIds) tagIds = tagIds + id
                 },
+                title = title,
+                onTitle = { title = it },
+                colors = controller.swatches,
+                palettes = controller.snapshot.palettes,
+                onSavePalette = { name, colors ->
+                    controller.swatches = colors
+                    controller.savePalette(name, colors)
+                },
+                onUsePalette = { controller.swatches = it },
+                locate = locate,
+                onLocate = ::pinPlace,
                 onSave = {
                     if (shot != null && shotId != null) ports.saveBlob(shotId!!, shot!!)
                     controller.save(
                         entry.copy(
-                            title = title.trim().ifBlank { entry.title.ifBlank { "Ink" } },
+                            title = title.trim().ifBlank { entry.title.ifBlank { "Image" } },
                             body = body.trim(),
                             tagIds = tagIds,
-                            type = "ink",
+                            type = "image",
+                            lat = if (locate) lat else null,
+                            lon = if (locate) lon else null,
+                            accuracyM = if (locate) accuracy else null,
                             payload = note.copy(ink = strokes, shotId = shotId),
                         ),
                     )
@@ -557,20 +731,20 @@ fun DetailScreen(entry: Entry, controller: HoldController, ports: PocketPorts, p
             )
         }
         if (askPhoto) {
-            PhotoSourceDialog(onBlank = null, onCamera = {
+            PhotoSourceDialog(onBlank = null, onCamera = { wipe ->
                 askPhoto = false
                 ports.takePicture(onBytes = { bytes ->
                     val id = shotId ?: newId()
                     shot = bytes
                     shotId = id
-                }, onError = { controller.status = it })
-            }, onLibrary = {
+                }, { controller.status = it }, wipe)
+            }, onLibrary = { wipe ->
                 askPhoto = false
                 ports.pickPicture(onBytes = { bytes ->
                     val id = shotId ?: newId()
                     shot = bytes
                     shotId = id
-                }, onError = { controller.status = it })
+                }, { controller.status = it }, wipe)
             }, onDismiss = { askPhoto = false })
         }
         return
@@ -594,12 +768,16 @@ fun DetailScreen(entry: Entry, controller: HoldController, ports: PocketPorts, p
                         body = rest,
                         tagIds = tags,
                         type = "text",
+                        lat = if (locate) lat else null,
+                        lon = if (locate) lon else null,
+                        accuracyM = if (locate) accuracy else null,
                         payload = note,
                     ),
                     stay = true,
                 )
             },
             onDiscard = LocalSheetDismiss.current,
+            footer = { LocateRow(locate, ::pinPlace) },
         )
         return
     }
@@ -610,6 +788,7 @@ fun DetailScreen(entry: Entry, controller: HoldController, ports: PocketPorts, p
             TextButton(onClick = dismiss) { Text("Discard") }
         }
         OutlinedTextField(title, { title = it }, label = { Text("Title") }, modifier = Modifier.fillMaxWidth())
+        LocateRow(locate, ::pinPlace)
         if (voice != null) {
             Waveform(voice.peaks)
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -854,6 +1033,10 @@ fun VoiceScreen(controller: HoldController, speech: Speech, ports: PocketPorts) 
     var listening by remember { mutableStateOf(false) }
     var paused by remember { mutableStateOf(false) }
     var muted by remember { mutableStateOf(false) }
+    var locate by remember { mutableStateOf(false) }
+    var lat by remember { mutableStateOf<Double?>(null) }
+    var lon by remember { mutableStateOf<Double?>(null) }
+    var accuracy by remember { mutableStateOf<Double?>(null) }
     val dismiss = LocalSheetDismiss.current
     fun file(result: CatchResult) {
         val text = result.transcript.ifBlank { heard }.trim()
@@ -873,6 +1056,9 @@ fun VoiceScreen(controller: HoldController, speech: Speech, ports: PocketPorts) 
                 updatedAt = now,
                 deviceId = controller.snapshot.sync.deviceId,
                 type = "audio",
+                lat = if (locate) lat else null,
+                lon = if (locate) lon else null,
+                accuracyM = if (locate) accuracy else null,
                 payload = Payload.Voice(
                     durationMs = result.durationMs,
                     transcript = text,
@@ -893,6 +1079,23 @@ fun VoiceScreen(controller: HoldController, speech: Speech, ports: PocketPorts) 
                 if (listening) speech.stop { }
                 dismiss()
             }) { Text("Discard") }
+        }
+        LocateRow(locate) { on ->
+            locate = on
+            if (!on) {
+                lat = null
+                lon = null
+                accuracy = null
+            } else {
+                ports.here(
+                    { a, b, c ->
+                        lat = a
+                        lon = b
+                        accuracy = c
+                    },
+                    { controller.status = it },
+                )
+            }
         }
         Text(note, color = HoldThemeColors.muted)
         Waveform(levels, modifier = Modifier.fillMaxWidth())
@@ -995,5 +1198,99 @@ fun LibraryScreen(controller: HoldController, poster: JsonPoster, ports: PocketP
             }) { Text(if (thin) "Sync once" else "Sync now") }
         }
         Text("${controller.visible().size} entries on this device.", color = HoldThemeColors.muted)
+    }
+}
+
+private val quickChoices = listOf(
+    "text" to "Text",
+    "image" to "Image",
+    "audio" to "Audio",
+    "place" to "Place",
+    "radio" to "Radio",
+)
+
+@Composable
+fun SettingsScreen(controller: HoldController, poster: JsonPoster) {
+    val settings = controller.snapshot.settings
+    val sync = controller.snapshot.sync
+    var baseUrl by remember(sync.baseUrl) { mutableStateOf(sync.baseUrl) }
+    var token by remember(sync.token) { mutableStateOf(sync.token) }
+    var renaming by remember { mutableStateOf<String?>(null) }
+    var rename by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Pocket", style = MaterialTheme.typography.titleMedium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(if (settings.mode == "thin") "Thin" else "Full", modifier = Modifier.weight(1f))
+            TextButton(onClick = {
+                controller.updateSettings(settings.copy(mode = if (settings.mode == "thin") "full" else "thin"))
+            }) { Text("Switch") }
+        }
+        Text("Quick list", style = MaterialTheme.typography.titleMedium)
+        Text("The new button only shows what you leave on.", color = HoldThemeColors.muted)
+        quickChoices.forEach { (id, label) ->
+            val on = id in settings.quick
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = on, onCheckedChange = {
+                    val next = if (on) settings.quick - id else settings.quick + id
+                    controller.updateSettings(settings.copy(quick = if (next.isEmpty()) listOf(id) else next))
+                })
+                Text(label)
+            }
+        }
+        Text("Sync", style = MaterialTheme.typography.titleMedium)
+        OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("Server") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(token, { token = it }, label = { Text("Token") }, modifier = Modifier.fillMaxWidth())
+        Button(onClick = {
+            controller.updateSync(sync.copy(baseUrl = baseUrl.trim(), token = token.trim()))
+            val snap = controller.snapshot
+            scope.launch {
+                controller.status = "Syncing…"
+                val outcome = runCatching { io { pushSync(snap) { url, body, tok -> poster.post(url, body, tok) } } }
+                outcome.onSuccess {
+                    controller.replace(it.snapshot)
+                    controller.status = it.summary
+                }.onFailure { controller.status = it.message ?: "Sync failed." }
+            }
+        }) { Text("Sync now") }
+        Text("Tags", style = MaterialTheme.typography.titleMedium)
+        controller.snapshot.tags.filter { it.deletedAt == null }.forEach { tag ->
+            if (renaming == tag.id) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(rename, { rename = it }, modifier = Modifier.weight(1f), singleLine = true)
+                    TextButton(onClick = {
+                        controller.renameTag(tag.id, rename)
+                        renaming = null
+                    }) { Text("Save") }
+                }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(tag.name, modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        renaming = tag.id
+                        rename = tag.name
+                    }) { Text("Rename") }
+                    TextButton(onClick = { controller.deleteTag(tag.id) }) { Text("Delete") }
+                }
+            }
+        }
+        var fresh by remember { mutableStateOf("") }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(fresh, { fresh = it }, label = { Text("New tag") }, modifier = Modifier.weight(1f), singleLine = true)
+            TextButton(onClick = {
+                controller.addTag(fresh)
+                fresh = ""
+            }) { Text("Add") }
+        }
+        Text("Palettes", style = MaterialTheme.typography.titleMedium)
+        val palettes = controller.snapshot.palettes.filter { it.deletedAt == null }
+        if (palettes.isEmpty()) Text("Save one from the image editor.", color = HoldThemeColors.muted)
+        palettes.forEach { palette ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(palette.name, modifier = Modifier.weight(1f))
+                Text("${palette.colors.size}", color = HoldThemeColors.muted)
+                TextButton(onClick = { controller.deletePalette(palette.id) }) { Text("Delete") }
+            }
+        }
     }
 }
