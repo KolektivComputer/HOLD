@@ -80,6 +80,7 @@ fun filedSpot(kind: String, value: String, deviceId: String, title: String = "")
         updatedAt = now,
         deviceId = deviceId,
         dirty = true,
+        type = "text",
         payload = payload,
     )
 }
@@ -106,6 +107,7 @@ fun phraseEntry(kind: String, text: String, deviceId: String): Entry? {
             updatedAt = now,
             deviceId = deviceId,
             dirty = true,
+            type = "audio",
             payload = Payload.Voice(transcript = trimmed),
         )
     }
@@ -118,6 +120,7 @@ fun phraseEntry(kind: String, text: String, deviceId: String): Entry? {
         updatedAt = now,
         deviceId = deviceId,
         dirty = true,
+        type = "text",
         payload = Payload.Note(),
     )
 }

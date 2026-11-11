@@ -18,6 +18,12 @@ interface PocketPorts {
     fun fetchTile(z: Int, x: Int, y: Int): ByteArray? = null
 
     fun street(lat: Double, lon: Double): String? = null
+
+    fun play(id: String, onDone: () -> Unit) {
+        onDone()
+    }
+
+    fun stopPlay() = Unit
 }
 
 object EmptyPorts : PocketPorts

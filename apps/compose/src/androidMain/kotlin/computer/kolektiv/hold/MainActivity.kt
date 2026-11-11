@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.os.Bundle
 import android.os.Handler
@@ -134,6 +135,41 @@ private fun postJson(url: String, body: String, token: String): String {
 private class AndroidPorts(private val activity: MainActivity) : PocketPorts {
     private val blobs = File(activity.filesDir, "blobs")
     private val tiles = File(activity.filesDir, "tiles")
+    private var player: MediaPlayer? = null
+
+    override fun stopPlay() {
+        player?.runCatching {
+            stop()
+            release()
+        }
+        player = null
+    }
+
+    override fun play(id: String, onDone: () -> Unit) {
+        val bytes = loadBlob(id) ?: run {
+            activity.runOnUiThread(onDone)
+            return
+        }
+        stopPlay()
+        val file = File(activity.cacheDir, "play-$id")
+        file.writeBytes(bytes)
+        val next = MediaPlayer()
+        try {
+            next.setDataSource(file.absolutePath)
+            next.setOnCompletionListener {
+                activity.runOnUiThread {
+                    stopPlay()
+                    onDone()
+                }
+            }
+            next.prepare()
+            next.start()
+            player = next
+        } catch (_: Exception) {
+            next.release()
+            activity.runOnUiThread(onDone)
+        }
+    }
 
     override fun here(onFix: (Double, Double, Double?) -> Unit, onError: (String) -> Unit) {
         activity.ensureLocation(onGranted = { deliver(onFix, onError, once = true) }, onDenied = { onError("Location permission was refused.") })
@@ -214,17 +250,29 @@ private class AndroidSpeech(private val activity: MainActivity) : Speech {
     private var startedAt = 0L
     private var transcript = ""
     private var onDone: ((CatchResult) -> Unit)? = null
+    private var onLevel: ((Float) -> Unit)? = null
     private var delivered = false
+    private val peaks = ArrayList<Float>()
     private val handler = Handler(Looper.getMainLooper())
+    private val clock = Handler(Looper.getMainLooper())
+    private val poll = object : Runnable {
+        override fun run() {
+            val rec = recorder ?: return
+            val level = (rec.maxAmplitude / 32767f).coerceIn(0f, 1f)
+            peaks += level
+            onLevel?.invoke(level)
+            clock.postDelayed(this, 70)
+        }
+    }
 
-    override fun listen(onPartial: (String) -> Unit, onError: (String) -> Unit) {
+    override fun listen(onPartial: (String) -> Unit, onLevel: (Float) -> Unit, onError: (String) -> Unit, transcribe: Boolean) {
         activity.ensureMic(
-            onGranted = { begin(onPartial, onError) },
+            onGranted = { begin(onPartial, onLevel, onError, transcribe) },
             onDenied = { onError("Microphone permission was refused.") },
         )
     }
 
-    private fun begin(onPartial: (String) -> Unit, onError: (String) -> Unit) {
+    private fun begin(onPartial: (String) -> Unit, onLevel: (Float) -> Unit, onError: (String) -> Unit, transcribe: Boolean) {
         val started = startRecorder()
         if (started == null) {
             onError("Couldn't open the microphone.")
@@ -235,13 +283,17 @@ private class AndroidSpeech(private val activity: MainActivity) : Speech {
         mime = started.third
         startedAt = System.currentTimeMillis()
         transcript = ""
+        peaks.clear()
         delivered = false
         onDone = null
-        startRecognizer(onPartial)
+        this.onLevel = onLevel
+        clock.post(poll)
+        if (transcribe) startRecognizer(onPartial)
     }
 
     override fun stop(onDone: (CatchResult) -> Unit) {
         this.onDone = onDone
+        clock.removeCallbacks(poll)
         val rec = recorder
         recorder = null
         try {
@@ -257,6 +309,7 @@ private class AndroidSpeech(private val activity: MainActivity) : Speech {
     private fun finish() {
         if (delivered) return
         delivered = true
+        clock.removeCallbacks(poll)
         handler.removeCallbacksAndMessages(null)
         recognizer?.destroy()
         recognizer = null
@@ -264,7 +317,8 @@ private class AndroidSpeech(private val activity: MainActivity) : Speech {
         file?.delete()
         file = null
         val duration = if (startedAt == 0L) 0L else (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
-        onDone?.invoke(CatchResult(transcript.trim(), bytes, if (bytes == null) "" else mime, duration))
+        onDone?.invoke(CatchResult(transcript.trim(), bytes, if (bytes == null) "" else mime, duration, peaks.toList()))
+        peaks.clear()
     }
 
     private fun startRecorder(): Triple<MediaRecorder, File, String>? {
@@ -330,5 +384,73 @@ private class AndroidSpeech(private val activity: MainActivity) : Speech {
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
         runCatching { rec.startListening(intent) }
+    }
+
+    override fun transcribe(bytes: ByteArray, mime: String, onText: (String) -> Unit, onError: (String) -> Unit) {
+        if (!SpeechRecognizer.isRecognitionAvailable(activity)) {
+            onError("This device has no speech recognizer. The recording is still saved.")
+            return
+        }
+        activity.ensureMic(onGranted = {
+            val ext = if (mime.contains("3gp")) "3gp" else "m4a"
+            val clip = File(activity.cacheDir, "hear-${System.currentTimeMillis()}.$ext")
+            clip.writeBytes(bytes)
+            val rec = runCatching { SpeechRecognizer.createSpeechRecognizer(activity) }.getOrNull()
+            if (rec == null) {
+                clip.delete()
+                onError("Couldn't start transcription.")
+                return@ensureMic
+            }
+            var player: MediaPlayer? = null
+            rec.setRecognitionListener(object : RecognitionListener {
+                override fun onResults(results: Bundle) {
+                    val text = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+                    player?.release()
+                    rec.destroy()
+                    clip.delete()
+                    if (text.isBlank()) onError("No words came back.") else onText(text)
+                }
+
+                override fun onPartialResults(partialResults: Bundle) = Unit
+
+                override fun onError(error: Int) {
+                    player?.release()
+                    rec.destroy()
+                    clip.delete()
+                    onError("Couldn't transcribe that recording.")
+                }
+
+                override fun onReadyForSpeech(params: Bundle) = Unit
+                override fun onBeginningOfSpeech() = Unit
+                override fun onRmsChanged(rmsdB: Float) = Unit
+                override fun onBufferReceived(buffer: ByteArray) = Unit
+                override fun onEndOfSpeech() = Unit
+                override fun onEvent(eventType: Int, params: Bundle) = Unit
+            })
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            }
+            if (runCatching { rec.startListening(intent) }.isFailure) {
+                rec.destroy()
+                clip.delete()
+                onError("Couldn't start transcription.")
+                return@ensureMic
+            }
+            val next = MediaPlayer()
+            player = next
+            if (runCatching {
+                    next.setDataSource(clip.absolutePath)
+                    next.setOnCompletionListener { rec.stopListening() }
+                    next.prepare()
+                    next.start()
+                }.isFailure
+            ) {
+                next.release()
+                rec.destroy()
+                clip.delete()
+                onError("Couldn't play the recording back.")
+            }
+        }, onDenied = { onError("Microphone permission was refused.") })
     }
 }

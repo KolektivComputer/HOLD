@@ -46,6 +46,7 @@ sealed interface Payload {
         val transcript: String = "",
         val hasAudio: Boolean = false,
         val mime: String = "",
+        val peaks: List<Float> = emptyList(),
     ) : Payload
 
     @Serializable
@@ -99,6 +100,7 @@ data class Entry(
     override val dirty: Boolean = false,
     override val syncedAt: Long? = null,
     val deviceId: String = "",
+    val type: String = "",
     val payload: Payload,
 ) : Stamp
 
@@ -142,6 +144,7 @@ data class PocketSettings(
     val mode: String = "full",
     val follow: Boolean = false,
     val deepseekKey: String = "",
+    val autoTranscribe: Boolean = true,
 )
 
 @Serializable
@@ -152,6 +155,24 @@ data class Fix(
     val lon: Double,
     val accuracyM: Double? = null,
 )
+
+val BUILTIN_TAGS = listOf(
+    "tag_phone" to "phone",
+    "tag_email" to "email",
+    "tag_address" to "address",
+    "tag_discord" to "discord",
+    "tag_x" to "x",
+    "tag_fluxer" to "fluxer",
+)
+
+fun Entry.medium(): String = when (type) {
+    "audio", "ink", "text" -> type
+    else -> when (val body = payload) {
+        is Payload.Voice -> "audio"
+        is Payload.Note -> if (body.ink.isNotEmpty() || body.shotId != null) "ink" else "text"
+        else -> "text"
+    }
+}
 
 @Serializable
 data class Snapshot(
