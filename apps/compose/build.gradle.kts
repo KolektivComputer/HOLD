@@ -45,7 +45,7 @@ kotlin {
 
 android {
     namespace = "computer.kolektiv.hold"
-    compileSdk = 36
+    compileSdk = 37
     defaultConfig {
         applicationId = "computer.kolektiv.hold"
         minSdk = 26

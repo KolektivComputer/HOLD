@@ -13,10 +13,27 @@ interface Stamp {
 }
 
 @Serializable
+data class InkPoint(val x: Float, val y: Float, val p: Float = 0.5f)
+
+@Serializable
+data class InkStroke(
+    val tool: String,
+    val color: String,
+    val width: Float,
+    val points: List<InkPoint> = emptyList(),
+)
+
+@Serializable
+data class Handle(val kind: String, val value: String)
+
+@Serializable
 sealed interface Payload {
     @Serializable
     @SerialName("note")
-    data object Note : Payload
+    data class Note(
+        val ink: List<InkStroke> = emptyList(),
+        val shotId: String? = null,
+    ) : Payload
 
     @Serializable
     @SerialName("number")
@@ -53,7 +70,18 @@ sealed interface Payload {
 
     @Serializable
     @SerialName("place")
-    data class Place(val lat: Double? = null, val lon: Double? = null) : Payload
+    data class Place(
+        val lat: Double? = null,
+        val lon: Double? = null,
+        val accuracyM: Double? = null,
+        val plus: String = "",
+        val address: String = "",
+        val w3w: String = "",
+    ) : Payload
+
+    @Serializable
+    @SerialName("contact")
+    data class Contact(val handles: List<Handle> = emptyList()) : Payload
 }
 
 @Serializable
@@ -110,12 +138,30 @@ data class SyncConfig(
 )
 
 @Serializable
+data class PocketSettings(
+    val mode: String = "full",
+    val follow: Boolean = false,
+    val deepseekKey: String = "",
+)
+
+@Serializable
+data class Fix(
+    val id: String,
+    val at: Long,
+    val lat: Double,
+    val lon: Double,
+    val accuracyM: Double? = null,
+)
+
+@Serializable
 data class Snapshot(
     val entries: List<Entry> = emptyList(),
     val categories: List<NamedItem> = emptyList(),
     val tags: List<NamedItem> = emptyList(),
     val views: List<SavedView> = emptyList(),
     val sync: SyncConfig = SyncConfig(),
+    val settings: PocketSettings = PocketSettings(),
+    val trail: List<Fix> = emptyList(),
 )
 
 fun nowMillis(): Long = Clock.System.now().toEpochMilliseconds()

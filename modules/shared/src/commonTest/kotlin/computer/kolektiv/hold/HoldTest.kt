@@ -1,6 +1,14 @@
 package computer.kolektiv.hold
 
+import computer.kolektiv.hold.geo.nominatimAddress
+import computer.kolektiv.hold.geo.plusCode
+import computer.kolektiv.hold.model.HoldJson
+import computer.kolektiv.hold.model.Payload
+import computer.kolektiv.hold.model.Snapshot
+import computer.kolektiv.hold.model.isExampleSet
+import computer.kolektiv.hold.model.buildSeed
 import computer.kolektiv.hold.parse.parseFlipper
+import computer.kolektiv.hold.parse.spotText
 import computer.kolektiv.hold.parse.parseHealthText
 import computer.kolektiv.hold.model.Stamp
 import computer.kolektiv.hold.sync.applyRemote
@@ -21,6 +29,24 @@ private data class Row(
 ) : Stamp
 
 class HoldTest {
+    @Test
+    fun plusCodeAndSpots() {
+        assertEquals("87JCMQ7M+66", plusCode(42.663, -71.217))
+        val spots = spotText("discord: lizzy and me@example.com and 555-014-0188")
+        assertEquals(listOf("discord", "email", "phone"), spots.map { it.kind })
+        assertEquals("lizzy", spots.first().value)
+    }
+
+    @Test
+    fun oldNoteJsonStillLoads() {
+        val raw = """{"entries":[{"id":"a","kind":"note","title":"Shed","body":"","createdAt":1,"updatedAt":1,"payload":{"kind":"note"}}],"sync":{"deviceId":"d"}}"""
+        val snapshot = HoldJson.decodeFromString<Snapshot>(raw)
+        val note = snapshot.entries.single().payload as Payload.Note
+        assertEquals(0, note.ink.size)
+        assertTrue(isExampleSet(buildSeed(1).entries))
+        assertEquals("Bridge St", nominatimAddress("""{"display_name":"Bridge St"}"""))
+    }
+
     @Test
     fun flipperNfc() {
         val parsed = parseFlipper("Filetype: Flipper NFC device\nDevice type: NTAG215\nUID: 04 11 22\n")

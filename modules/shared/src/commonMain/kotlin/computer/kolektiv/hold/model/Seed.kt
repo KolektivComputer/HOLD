@@ -50,7 +50,7 @@ fun buildSeed(now: Long = nowMillis()): Snapshot {
         payload = payload,
     )
     val entries = listOf(
-        entry("ent_shed", "note", "Shed gate", "Code is on the post, not the door. The lock sticks if you turn it left first.", 3_600_000, "cat_personal", listOf("tag_later"), true, Payload.Note),
+        entry("ent_shed", "note", "Shed gate", "Code is on the post, not the door. The lock sticks if you turn it left first.", 3_600_000, "cat_personal", listOf("tag_later"), true, Payload.Note()),
         entry("ent_tow", "number", "Tow — Ray's", "Ask for the night desk.", 7_200_000, "cat_errands", listOf("tag_driving"), payload = Payload.Phone("+1 555 014 0188")),
         entry("ent_voice", "voice", "Charger", "", 5_400_000, null, listOf("tag_driving"), payload = Payload.Voice(durationMs = 3200, transcript = "Left the charger in the truck.")),
         entry("ent_nfc", "radio", "NTAG215 · 04 A1 22 9C 5E 67 80", "Plant tag on the bench vise.", 9_000_000, "cat_radio", listOf("tag_flipper"), payload = Payload.Radio(protocol = "nfc", uid = "04 A1 22 9C 5E 67 80", filetype = "Flipper NFC device", raw = nfc)),
@@ -64,4 +64,16 @@ fun buildSeed(now: Long = nowMillis()): Snapshot {
         views = views,
         sync = SyncConfig(deviceId = deviceId),
     )
+}
+
+val SEED_ENTRY_IDS = listOf("ent_shed", "ent_tow", "ent_voice", "ent_nfc", "ent_hr", "ent_place")
+val SEED_CATEGORY_IDS = listOf("cat_personal", "cat_radio", "cat_errands", "cat_health")
+val SEED_TAG_IDS = listOf("tag_later", "tag_driving", "tag_flipper")
+val SEED_VIEW_IDS = listOf("view_radio", "view_driving")
+
+fun isExampleSet(entries: List<Entry>): Boolean {
+    val live = entries.filter { it.deletedAt == null }
+    if (live.size != SEED_ENTRY_IDS.size) return false
+    val ids = live.map { it.id }.toSet()
+    return SEED_ENTRY_IDS.all { it in ids }
 }
