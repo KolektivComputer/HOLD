@@ -76,6 +76,7 @@ import computer.kolektiv.hold.model.isExampleSet
 import computer.kolektiv.hold.model.medium
 import computer.kolektiv.hold.model.newId
 import computer.kolektiv.hold.model.nowMillis
+import computer.kolektiv.hold.model.reading
 import computer.kolektiv.hold.parse.parseFlipper
 import computer.kolektiv.hold.parse.spotText
 import computer.kolektiv.hold.sync.pushSync
@@ -118,6 +119,8 @@ fun NotePage(
     onCommit: (String, String, List<String>) -> Unit,
     onDiscard: () -> Unit,
     footer: @Composable () -> Unit = {},
+    taken: Long? = null,
+    edited: Long? = null,
 ) {
     var editing by remember { mutableStateOf(startEditing) }
     var header by remember { mutableStateOf(title) }
@@ -143,6 +146,7 @@ fun NotePage(
                 Icon(if (editing) HoldIcons.Check else HoldIcons.Pencil, if (editing) "Done" else "Edit", tint = HoldThemeColors.fg)
             }
         }
+        if (taken != null && edited != null) StampBoth(taken, edited)
         if (editing) {
             TagEditor(tagIds, tags, onTags, onCreateTag)
         } else {
@@ -305,6 +309,7 @@ fun LogScreen(controller: HoldController, ports: PocketPorts) {
                             }
                             if (names.isNotEmpty()) Text(names.joinToString(" · "), color = HoldThemeColors.accent)
                             if (entry.lat != null) Text("Place saved", color = HoldThemeColors.muted)
+                            Text(recentStamp(entry), color = HoldThemeColors.muted)
                         }
                     },
                     trailingContent = {
@@ -723,11 +728,13 @@ fun DetailScreen(entry: Entry, controller: HoldController, ports: PocketPorts, p
                 onRead = {
                     scope.launch {
                         controller.status = "Reading the page…"
-                        val text = runCatching { readPage(strokes, shot, controller.snapshot.settings.deepseekKey, poster) }.getOrElse { it.message ?: "Couldn't read it." }
+                        val text = runCatching { readPage(strokes, shot, controller.snapshot.settings.reading(), poster) }.getOrElse { it.message ?: "Couldn't read it." }
                         controller.status = text
-                        if (!text.startsWith("DeepSeek") && !text.startsWith("Add a") && !text.startsWith("This build") && !text.startsWith("Couldn't")) body = text
+                        if (!isReadError(text)) body = text
                     }
                 },
+                taken = entry.createdAt,
+                edited = entry.updatedAt,
             )
         }
         if (askPhoto) {
@@ -778,6 +785,8 @@ fun DetailScreen(entry: Entry, controller: HoldController, ports: PocketPorts, p
             },
             onDiscard = LocalSheetDismiss.current,
             footer = { LocateRow(locate, ::pinPlace) },
+            taken = entry.createdAt,
+            edited = entry.updatedAt,
         )
         return
     }
@@ -787,6 +796,7 @@ fun DetailScreen(entry: Entry, controller: HoldController, ports: PocketPorts, p
             TextButton(onClick = dismiss) { Text("Close") }
             TextButton(onClick = dismiss) { Text("Discard") }
         }
+        StampBoth(entry.createdAt, entry.updatedAt)
         OutlinedTextField(title, { title = it }, label = { Text("Title") }, modifier = Modifier.fillMaxWidth())
         LocateRow(locate, ::pinPlace)
         if (voice != null) {
@@ -879,9 +889,9 @@ fun DetailScreen(entry: Entry, controller: HoldController, ports: PocketPorts, p
                 TextButton(onClick = {
                     scope.launch {
                         controller.status = "Reading the page…"
-                        val text = runCatching { readPage(strokes, shot, controller.snapshot.settings.deepseekKey, poster) }.getOrElse { it.message ?: "Couldn't read it." }
+                        val text = runCatching { readPage(strokes, shot, controller.snapshot.settings.reading(), poster) }.getOrElse { it.message ?: "Couldn't read it." }
                         controller.status = text
-                        if (!text.startsWith("DeepSeek") && !text.startsWith("Add a") && !text.startsWith("This build") && !text.startsWith("Couldn't")) body = text
+                        if (!isReadError(text)) body = text
                     }
                 }) { Text("Read the page") }
             }
@@ -889,17 +899,49 @@ fun DetailScreen(entry: Entry, controller: HoldController, ports: PocketPorts, p
     }
 }
 
-private suspend fun readPage(strokes: List<computer.kolektiv.hold.model.InkStroke>, shot: ByteArray?, key: String, poster: JsonPoster): String {
-    val trimmed = key.trim()
-    if (trimmed.isEmpty()) return "Add a DeepSeek key in Library first. It stays on this device."
+private fun isReadError(text: String): Boolean =
+    text.startsWith("Add a") || text.startsWith("Reading is") || text.startsWith("This build") || text.startsWith("Couldn't") || text.startsWith("The reader")
+
+private suspend fun readPage(strokes: List<computer.kolektiv.hold.model.InkStroke>, shot: ByteArray?, provider: computer.kolektiv.hold.model.ReadProvider, poster: JsonPoster): String {
+    if (provider.kind == "off") return "Reading is off. Turn a provider on in Sync."
+    val trimmed = provider.key.trim()
+    if (trimmed.isEmpty()) return "Add a reading key in Sync. It stays on this device."
+    val endpoint = provider.endpoint.trim()
+    val model = provider.model.trim()
+    if (!endpoint.startsWith("https://")) return "The reader needs an https address."
+    if (model.isEmpty()) return "The reader needs a model name."
     val jpeg = rasterPocketPage(strokes, shot) ?: return "This build can draw. Reading the page is on the Android build."
     val image = "data:image/jpeg;base64,${Base64.encode(jpeg)}"
-    val body = """{"model":"deepseek-flash","messages":[{"role":"user","content":[{"type":"text","text":"Read the handwriting or screenshot. Return only the text you can see. Keep phone numbers and handles exact."},{"type":"image_url","image_url":{"url":"$image"}}]}]}"""
-    val raw = io { poster.post("https://api.deepseek.com/chat/completions", body, trimmed) }
+    val body = """{"model":${jsonString(model)},"messages":[{"role":"user","content":[{"type":"text","text":"Read the handwriting or screenshot. Return only the text you can see. Keep phone numbers and handles exact."},{"type":"image_url","image_url":{"url":"$image"}}]}]}"""
+    val raw = io { poster.post(endpoint, body, trimmed) }
     val marker = "\"content\":\""
     val start = raw.indexOf(marker)
-    if (start < 0) return "DeepSeek returned nothing."
+    if (start < 0) return "The reader returned nothing."
     return raw.substring(start + marker.length).substringBefore("\"").replace("\\n", "\n")
+}
+
+private fun jsonString(value: String): String = buildString {
+    append('"')
+    value.forEach { char ->
+        when (char) {
+            '\\' -> append("\\\\")
+            '"' -> append("\\\"")
+            else -> append(char)
+        }
+    }
+    append('"')
+}
+
+fun recentStamp(entry: Entry): String {
+    val edited = entry.updatedAt > entry.createdAt
+    val whenText = formatStamp(if (edited) entry.updatedAt else entry.createdAt)
+    return if (edited) "Edited $whenText" else "Taken $whenText"
+}
+
+@Composable
+fun StampBoth(taken: Long, edited: Long) {
+    Text("Taken ${formatStamp(taken)}", color = HoldThemeColors.muted)
+    Text("Edited ${formatStamp(edited)}", color = HoldThemeColors.muted)
 }
 
 @Composable
@@ -1143,64 +1185,6 @@ fun VoiceScreen(controller: HoldController, speech: Speech, ports: PocketPorts) 
     }
 }
 
-@Composable
-fun LibraryScreen(controller: HoldController, poster: JsonPoster, ports: PocketPorts) {
-    val scope = rememberCoroutineScope()
-    val settings = controller.snapshot.settings
-    var baseUrl by remember(controller.snapshot.sync.baseUrl) { mutableStateOf(controller.snapshot.sync.baseUrl) }
-    var token by remember(controller.snapshot.sync.token) { mutableStateOf(controller.snapshot.sync.token) }
-    var key by remember(settings.deepseekKey) { mutableStateOf(settings.deepseekKey) }
-    val thin = settings.mode == "thin"
-    DisposableEffect(settings.follow, thin) {
-        if (!settings.follow || thin) return@DisposableEffect onDispose { }
-        val stop = ports.watch { lat, lon, accuracy -> controller.addFix(lat, lon, accuracy) }
-        onDispose { stop() }
-    }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(if (thin) "Thin. Offline on this device. Sync runs only when you tap it." else "Full. Sync still waits until you tap it. Follow can keep a trail.")
-        Row {
-            TextButton(onClick = {
-                controller.updateSettings(settings.copy(mode = if (thin) "full" else "thin", follow = false, deepseekKey = key.trim()))
-            }) { Text(if (thin) "Use full" else "Use thin") }
-            TextButton(onClick = {
-                controller.updateSettings(settings.copy(autoTranscribe = !settings.autoTranscribe, deepseekKey = key.trim()))
-            }) { Text(if (settings.autoTranscribe) "Auto transcribe on" else "Auto transcribe off") }
-            if (!thin) {
-                TextButton(onClick = {
-                    controller.updateSettings(settings.copy(follow = !settings.follow, deepseekKey = key.trim()))
-                }) { Text(if (settings.follow) "Stop following" else "Follow me") }
-            }
-        }
-        Text("${controller.snapshot.trail.size} trail points on this device.", color = HoldThemeColors.muted)
-        OutlinedTextField(key, { key = it }, label = { Text("DeepSeek key, on this device") }, modifier = Modifier.fillMaxWidth())
-        TextButton(onClick = { controller.updateSettings(settings.copy(deepseekKey = key.trim())) }) { Text("Save key") }
-        Text("Point sync at a server you host. Nothing leaves until you tap Sync.", color = HoldThemeColors.muted)
-        OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("Server") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(token, { token = it }, label = { Text("Token") }, modifier = Modifier.fillMaxWidth())
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = {
-                controller.updateSync(controller.snapshot.sync.copy(baseUrl = baseUrl.trim(), token = token.trim()))
-                controller.status = "Server settings saved on this device."
-            }) { Text("Save server") }
-            Button(onClick = {
-                controller.updateSync(controller.snapshot.sync.copy(baseUrl = baseUrl.trim(), token = token.trim()))
-                val snap = controller.snapshot
-                scope.launch {
-                    controller.status = "Syncing…"
-                    val outcome = runCatching { io { pushSync(snap) { url, body, token -> poster.post(url, body, token) } } }
-                    outcome.onSuccess {
-                        controller.replace(it.snapshot)
-                        controller.status = it.summary
-                    }.onFailure {
-                        controller.status = it.message ?: "Sync failed."
-                    }
-                }
-            }) { Text(if (thin) "Sync once" else "Sync now") }
-        }
-        Text("${controller.visible().size} entries on this device.", color = HoldThemeColors.muted)
-    }
-}
-
 private val quickChoices = listOf(
     "text" to "Text",
     "image" to "Image",
@@ -1210,23 +1194,54 @@ private val quickChoices = listOf(
 )
 
 @Composable
-fun SettingsScreen(controller: HoldController, poster: JsonPoster) {
+fun SettingsScreen(controller: HoldController) {
     val settings = controller.snapshot.settings
-    val sync = controller.snapshot.sync
-    var baseUrl by remember(sync.baseUrl) { mutableStateOf(sync.baseUrl) }
-    var token by remember(sync.token) { mutableStateOf(sync.token) }
-    var renaming by remember { mutableStateOf<String?>(null) }
-    var rename by remember { mutableStateOf("") }
-    val scope = rememberCoroutineScope()
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    val thin = settings.mode == "thin"
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("Pocket", style = MaterialTheme.typography.titleMedium)
+        Text(if (thin) "Thin. This device stays offline unless you sync." else "Full. Sync still waits until you tap it.", color = HoldThemeColors.muted)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (settings.mode == "thin") "Thin" else "Full", modifier = Modifier.weight(1f))
+            Text(if (thin) "Thin" else "Full", modifier = Modifier.weight(1f))
             TextButton(onClick = {
-                controller.updateSettings(settings.copy(mode = if (settings.mode == "thin") "full" else "thin"))
+                controller.updateSettings(settings.copy(mode = if (thin) "full" else "thin", follow = false))
             }) { Text("Switch") }
         }
-        Text("Quick list", style = MaterialTheme.typography.titleMedium)
+        if (!thin) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(if (settings.follow) "Following" else "Not following", modifier = Modifier.weight(1f))
+                TextButton(onClick = {
+                    controller.updateSettings(settings.copy(follow = !settings.follow))
+                }) { Text(if (settings.follow) "Stop" else "Follow me") }
+            }
+        }
+        Text("${controller.snapshot.trail.size} trail points on this device.", color = HoldThemeColors.muted)
+        HorizontalDivider(color = HoldThemeColors.fg.copy(alpha = 0.12f))
+        SettingsLink("Quick list") { controller.screen = "settings-quick" }
+        SettingsLink("Sync") { controller.screen = "settings-sync" }
+        SettingsLink("Tags") { controller.screen = "settings-tags" }
+        SettingsLink("Palettes") { controller.screen = "settings-palettes" }
+    }
+}
+
+@Composable
+private fun SettingsLink(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 14.dp),
+        style = MaterialTheme.typography.titleMedium,
+    )
+}
+
+@Composable
+private fun SettingsBack(onBack: () -> Unit) {
+    TextButton(onClick = onBack) { Text("Settings") }
+}
+
+@Composable
+fun QuickListScreen(controller: HoldController) {
+    val settings = controller.snapshot.settings
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        SettingsBack { controller.screen = "settings" }
         Text("The new button only shows what you leave on.", color = HoldThemeColors.muted)
         quickChoices.forEach { (id, label) ->
             val on = id in settings.quick
@@ -1238,7 +1253,25 @@ fun SettingsScreen(controller: HoldController, poster: JsonPoster) {
                 Text(label)
             }
         }
-        Text("Sync", style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+@Composable
+fun SyncScreen(controller: HoldController, poster: JsonPoster) {
+    val settings = controller.snapshot.settings
+    val sync = controller.snapshot.sync
+    val reading = settings.reading()
+    var baseUrl by remember(sync.baseUrl) { mutableStateOf(sync.baseUrl) }
+    var token by remember(sync.token) { mutableStateOf(sync.token) }
+    var kind by remember(settings.reader.kind) { mutableStateOf(if (settings.reader.kind.isBlank()) "deepseek" else settings.reader.kind) }
+    var key by remember(reading.key) { mutableStateOf(reading.key) }
+    var endpoint by remember(settings.reader.endpoint) { mutableStateOf(settings.reader.endpoint) }
+    var model by remember(settings.reader.model) { mutableStateOf(settings.reader.model) }
+    val scope = rememberCoroutineScope()
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SettingsBack { controller.screen = "settings" }
+        Text("Server", style = MaterialTheme.typography.titleMedium)
+        Text("Nothing leaves for sync until you tap it. You host the server.", color = HoldThemeColors.muted)
         OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("Server") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(token, { token = it }, label = { Text("Token") }, modifier = Modifier.fillMaxWidth())
         Button(onClick = {
@@ -1253,7 +1286,46 @@ fun SettingsScreen(controller: HoldController, poster: JsonPoster) {
                 }.onFailure { controller.status = it.message ?: "Sync failed." }
             }
         }) { Text("Sync now") }
-        Text("Tags", style = MaterialTheme.typography.titleMedium)
+        Text("Reading", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Read on a drawing sends that page to the provider below. The key stays on this device. Voice transcription does not use it. On Android, speech stays on the phone.",
+            color = HoldThemeColors.muted,
+        )
+        Row(Modifier.horizontalScroll(rememberScrollState())) {
+            listOf("off" to "Off", "deepseek" to "DeepSeek", "custom" to "Custom").forEach { (id, label) ->
+                TextButton(onClick = { kind = id }) { Text(if (kind == id) label.uppercase() else label) }
+            }
+        }
+        if (kind != "off") {
+            OutlinedTextField(key, { key = it }, label = { Text("Key, on this device") }, modifier = Modifier.fillMaxWidth())
+        }
+        if (kind == "custom") {
+            OutlinedTextField(endpoint, { endpoint = it }, label = { Text("https endpoint") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(model, { model = it }, label = { Text("Model") }, modifier = Modifier.fillMaxWidth())
+            Text("Custom means any OpenAI-style chat completions API that accepts an image.", color = HoldThemeColors.muted)
+        } else if (kind == "deepseek") {
+            Text("DeepSeek reads handwriting and screenshots. It is not used for voice.", color = HoldThemeColors.muted)
+        }
+        TextButton(onClick = {
+            val storedKey = key.trim()
+            controller.updateSettings(
+                settings.copy(
+                    deepseekKey = if (kind == "deepseek") storedKey else settings.deepseekKey,
+                    reader = settings.reader.copy(kind = kind, key = storedKey, endpoint = endpoint.trim(), model = model.trim()),
+                ),
+            )
+            controller.status = "Reading settings saved on this device."
+        }) { Text("Save reading") }
+    }
+}
+
+@Composable
+fun TagManagerScreen(controller: HoldController) {
+    var renaming by remember { mutableStateOf<String?>(null) }
+    var rename by remember { mutableStateOf("") }
+    var fresh by remember { mutableStateOf("") }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SettingsBack { controller.screen = "settings" }
         controller.snapshot.tags.filter { it.deletedAt == null }.forEach { tag ->
             if (renaming == tag.id) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1274,7 +1346,6 @@ fun SettingsScreen(controller: HoldController, poster: JsonPoster) {
                 }
             }
         }
-        var fresh by remember { mutableStateOf("") }
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(fresh, { fresh = it }, label = { Text("New tag") }, modifier = Modifier.weight(1f), singleLine = true)
             TextButton(onClick = {
@@ -1282,9 +1353,16 @@ fun SettingsScreen(controller: HoldController, poster: JsonPoster) {
                 fresh = ""
             }) { Text("Add") }
         }
-        Text("Palettes", style = MaterialTheme.typography.titleMedium)
-        val palettes = controller.snapshot.palettes.filter { it.deletedAt == null }
-        if (palettes.isEmpty()) Text("Save one from the image editor.", color = HoldThemeColors.muted)
+    }
+}
+
+@Composable
+fun PaletteScreen(controller: HoldController) {
+    val palettes = controller.snapshot.palettes.filter { it.deletedAt == null }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SettingsBack { controller.screen = "settings" }
+        Text("Palettes saved from the image editor. The one you are drawing with has no name until you save it.", color = HoldThemeColors.muted)
+        if (palettes.isEmpty()) Text("None saved yet.", color = HoldThemeColors.muted)
         palettes.forEach { palette ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(palette.name, modifier = Modifier.weight(1f))

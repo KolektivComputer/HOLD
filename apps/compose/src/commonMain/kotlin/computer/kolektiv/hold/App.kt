@@ -27,6 +27,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -338,6 +339,12 @@ fun HoldApp(
         if (request.text.isBlank()) return@LaunchedEffect
         controller.filePhrase(request.kind, request.text)
     }
+    val follow = controller.snapshot.settings.follow && controller.snapshot.settings.mode != "thin"
+    DisposableEffect(follow) {
+        if (!follow) return@DisposableEffect onDispose { }
+        val stop = ports.watch { lat, lon, accuracy -> controller.addFix(lat, lon, accuracy) }
+        onDispose { stop() }
+    }
     WatchCaptures(
         onText = { kind, text -> controller.filePhrase(kind, text) },
         onAudio = { bytes ->
@@ -396,8 +403,11 @@ fun HoldApp(
         val scope = rememberCoroutineScope()
         var wipe by remember { mutableStateOf(false) }
         val page = when (controller.screen) {
-            "library" -> "Library"
             "settings" -> "Settings"
+            "settings-quick" -> "Quick list"
+            "settings-sync" -> "Sync"
+            "settings-tags" -> "Tags"
+            "settings-palettes" -> "Palettes"
             else -> if (controller.snapshot.settings.mode == "thin") "Log · thin" else "Log"
         }
         Box(Modifier.fillMaxSize()) {
@@ -408,17 +418,8 @@ fun HoldApp(
                     ModalDrawerSheet(drawerContainerColor = HoldThemeColors.surface) {
                         Text("HOLD", modifier = Modifier.padding(16.dp), style = androidx.compose.material3.MaterialTheme.typography.titleLarge)
                         NavigationDrawerItem(
-                            label = { Text("Library") },
-                            selected = controller.screen == "library",
-                            onClick = {
-                                controller.selectedId = null
-                                controller.screen = "library"
-                                scope.launch { drawer.close() }
-                            },
-                        )
-                        NavigationDrawerItem(
                             label = { Text("Settings") },
-                            selected = controller.screen == "settings",
+                            selected = controller.screen.startsWith("settings"),
                             onClick = {
                                 controller.selectedId = null
                                 controller.screen = "settings"
@@ -478,8 +479,11 @@ fun HoldApp(
                         }
                         Box(Modifier.weight(1f).padding(horizontal = if (controller.screen == "log") 0.dp else 16.dp)) {
                             when {
-                                controller.screen == "library" && selected == null -> LibraryScreen(controller, poster, ports)
-                                controller.screen == "settings" && selected == null -> SettingsScreen(controller, poster)
+                                controller.screen == "settings" && selected == null -> SettingsScreen(controller)
+                                controller.screen == "settings-quick" && selected == null -> QuickListScreen(controller)
+                                controller.screen == "settings-sync" && selected == null -> SyncScreen(controller, poster)
+                                controller.screen == "settings-tags" && selected == null -> TagManagerScreen(controller)
+                                controller.screen == "settings-palettes" && selected == null -> PaletteScreen(controller)
                                 else -> LogScreen(controller, ports)
                             }
                         }
@@ -490,7 +494,7 @@ fun HoldApp(
                 EntrySheet(onDismiss = {
                     controller.selectedId = null
                     controller.draft.clear()
-                    if (controller.screen != "library" && controller.screen != "settings") controller.screen = "log"
+                    if (!controller.screen.startsWith("settings")) controller.screen = "log"
                 }) {
                     when {
                         selected != null -> DetailScreen(selected, controller, ports, poster, speech)

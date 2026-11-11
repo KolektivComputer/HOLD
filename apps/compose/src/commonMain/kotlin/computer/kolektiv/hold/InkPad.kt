@@ -112,6 +112,8 @@ fun InkEditor(
     onDiscard: () -> Unit,
     onOpenImage: () -> Unit,
     onRead: (() -> Unit)? = null,
+    taken: Long? = null,
+    edited: Long? = null,
     modifier: Modifier = Modifier,
 ) {
     var past by remember { mutableStateOf(listOf<List<InkStroke>>()) }
@@ -162,6 +164,13 @@ fun InkEditor(
                 IconButton(onClick = onOpenImage) { Icon(HoldIcons.Image, "Open image", tint = HoldThemeColors.fg) }
                 if (onRead != null) TextButton(onClick = onRead) { Text("Read") }
             }
+        }
+        if (taken != null && edited != null) {
+            Text(
+                "Taken ${formatStamp(taken)}   Edited ${formatStamp(edited)}",
+                color = HoldThemeColors.muted,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 52.dp),
+            )
         }
         Column(
             Modifier

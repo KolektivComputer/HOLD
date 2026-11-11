@@ -154,13 +154,36 @@ data class Palette(
 ) : Stamp
 
 @Serializable
+data class ReadProvider(
+    val kind: String = "deepseek",
+    val key: String = "",
+    val endpoint: String = "",
+    val model: String = "",
+)
+
+@Serializable
 data class PocketSettings(
     val mode: String = "full",
     val follow: Boolean = false,
     val deepseekKey: String = "",
     val autoTranscribe: Boolean = true,
     val quick: List<String> = listOf("text", "image", "audio", "place"),
+    val reader: ReadProvider = ReadProvider(),
 )
+
+fun PocketSettings.reading(): ReadProvider {
+    val key = reader.key.ifBlank { deepseekKey }
+    return when (reader.kind) {
+        "off" -> reader.copy(key = key)
+        "custom" -> reader.copy(key = key)
+        else -> reader.copy(
+            kind = "deepseek",
+            key = key,
+            endpoint = reader.endpoint.ifBlank { "https://api.deepseek.com/chat/completions" },
+            model = reader.model.ifBlank { "deepseek-flash" },
+        )
+    }
+}
 
 @Serializable
 data class Fix(
