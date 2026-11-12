@@ -41,6 +41,8 @@ interface PocketPorts {
 
     fun outsideUp(): Boolean = false
 
+    fun outsideJump(index: Int) = Unit
+
     fun outsidePath(): String = ""
 
     fun outsideRead(id: String): ByteArray? = null

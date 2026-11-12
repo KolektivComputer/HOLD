@@ -173,17 +173,11 @@ fun NotePage(
                     inner()
                 },
             )
-            MarkdownBar { action -> rest = applyMarkdown(rest, action) }
-            BasicTextField(
-                value = rest,
-                onValueChange = { rest = it },
-                textStyle = bodyStyle,
-                cursorBrush = SolidColor(HoldThemeColors.accent),
+            MarkdownEditor(
+                initial = body,
+                onChange = { rest = TextFieldValue(it) },
+                style = bodyStyle,
                 modifier = Modifier.fillMaxWidth().weight(1f),
-                decorationBox = { inner ->
-                    if (rest.text.isEmpty()) Text("Write", style = bodyStyle, color = HoldThemeColors.muted)
-                    inner()
-                },
             )
         } else {
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {

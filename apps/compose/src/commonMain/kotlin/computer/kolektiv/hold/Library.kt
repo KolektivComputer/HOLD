@@ -1,7 +1,15 @@
 package computer.kolektiv.hold
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -44,9 +52,9 @@ fun LibraryScreen(controller: HoldController, ports: PocketPorts) {
     var movingFolder by remember { mutableStateOf<String?>(null) }
     var playing by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 88.dp)) {
-        Row(Modifier.padding(horizontal = 8.dp)) {
-            TextButton(onClick = { outside = false }) { Text(if (!outside) "HOLD" else "Hold") }
-            TextButton(onClick = { outside = true }) { Text(if (outside) "OUTSIDE" else "Outside") }
+        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SourceBlock("HOLD", HoldIcons.Library, selected = !outside, Modifier.weight(1f)) { outside = false }
+            SourceBlock("Outside", HoldIcons.Folder, selected = outside, Modifier.weight(1f)) { outside = true }
         }
         if (!outside) HoldShelf(controller, ports, { naming = true }, { id, name ->
             renaming = id
@@ -134,14 +142,14 @@ private fun HoldShelf(
     onPlaying: (String?) -> Unit,
 ) {
     val crumbs = controller.folderCrumbs()
-    Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        TextButton(onClick = { controller.folderId = null }) { Text(if (controller.folderId == null) "Hold" else "Hold") }
-        crumbs.forEach { folder ->
-            Text("/", color = HoldThemeColors.muted)
-            TextButton(onClick = { controller.folderId = folder.id }) { Text(folder.name) }
-        }
-    }
-    TextButton(onClick = onNewFolder, modifier = Modifier.padding(horizontal = 8.dp)) { Text("New folder") }
+    PathBar(
+        root = "Hold",
+        parts = crumbs.map { it.name },
+        action = "New folder",
+        onRoot = { controller.folderId = null },
+        onPart = { index -> controller.folderId = crumbs[index].id },
+        onAction = onNewFolder,
+    )
     val folders = controller.foldersHere()
     val entries = controller.entriesHere()
     if (folders.isEmpty() && entries.isEmpty()) {
@@ -218,22 +226,27 @@ private fun OutsideShelf(
     bump: () -> Unit,
 ) {
     val ready = ports.hasOutside()
-    Text("Outside is read-only. Import copies into HOLD.", color = HoldThemeColors.muted, modifier = Modifier.padding(horizontal = 16.dp))
-    Row(Modifier.padding(horizontal = 8.dp)) {
-        TextButton(onClick = {
+    val nodes = remember(generation, ready) { if (ready) ports.outsideList() else emptyList() }
+    val parts = if (ready) ports.outsidePath().split(" / ").filter { it.isNotBlank() } else emptyList()
+    if (!ready) {
+        Text("Open a folder on this device. Browsing stays read-only.", color = HoldThemeColors.muted, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+    }
+    PathBar(
+        root = parts.firstOrNull() ?: "Outside",
+        parts = parts.drop(1),
+        action = if (ready) "Change" else "Open",
+        onRoot = { if (ready) { ports.outsideJump(0); bump() } },
+        onPart = { index ->
+            ports.outsideJump(index + 1)
+            bump()
+        },
+        onAction = {
             ports.openOutside(onReady = {
                 ports.resetOutside()
                 bump()
             }, onError = { controller.status = it })
-        }) { Text(if (ready) "Change folder" else "Open a folder") }
-        if (ready) {
-            TextButton(onClick = {
-                if (ports.outsideUp()) bump()
-            }) { Text("Up") }
-        }
-    }
-    if (ready) Text(ports.outsidePath().ifBlank { "Outside" }, color = HoldThemeColors.muted, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-    val nodes = remember(generation, ready) { if (ready) ports.outsideList() else emptyList() }
+        },
+    )
     if (ready && nodes.isEmpty()) Text("This folder is empty.", color = HoldThemeColors.muted, modifier = Modifier.padding(16.dp))
     nodes.forEach { node ->
         ShelfRow(
@@ -261,6 +274,61 @@ private fun OutsideShelf(
             },
         )
     }
+}
+
+@Composable
+private fun SourceBlock(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val ink = if (selected) HoldThemeColors.bg else HoldThemeColors.fg
+    Row(
+        modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) HoldThemeColors.accent else HoldThemeColors.surface)
+            .border(1.dp, if (selected) HoldThemeColors.accent else HoldThemeColors.fg.copy(alpha = 0.16f), RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(icon, label, tint = ink, modifier = Modifier.size(28.dp))
+        Text(label, color = ink, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+@Composable
+private fun PathBar(
+    root: String,
+    parts: List<String>,
+    action: String,
+    onRoot: () -> Unit,
+    onPart: (Int) -> Unit,
+    onAction: () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().background(HoldThemeColors.surface)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.weight(1f).horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                PathChip(root, onRoot)
+                parts.forEachIndexed { index, name ->
+                    Text("›", color = HoldThemeColors.muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 2.dp))
+                    PathChip(name) { onPart(index) }
+                }
+            }
+            TextButton(onClick = onAction) { Text(action, fontSize = 12.sp) }
+        }
+        HorizontalDivider(color = HoldThemeColors.fg.copy(alpha = 0.16f))
+    }
+}
+
+@Composable
+private fun PathChip(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        color = HoldThemeColors.fg,
+        fontSize = 12.sp,
+        modifier = Modifier.clickable(onClick = onClick).padding(horizontal = 4.dp, vertical = 6.dp),
+    )
 }
 
 @Composable

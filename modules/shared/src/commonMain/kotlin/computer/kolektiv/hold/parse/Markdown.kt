@@ -3,11 +3,47 @@ package computer.kolektiv.hold.parse
 sealed interface MdBlock {
     data class Heading(val level: Int, val text: String) : MdBlock
     data class Paragraph(val text: String) : MdBlock
-    data class Bullet(val text: String, val checked: Boolean? = null) : MdBlock
-    data class Numbered(val index: String, val text: String) : MdBlock
-    data class Quote(val text: String) : MdBlock
+    data class Bullet(val text: String, val checked: Boolean? = null, val depth: Int = 0) : MdBlock
+    data class Numbered(val index: String, val text: String, val depth: Int = 0) : MdBlock
+    data class Quote(val text: String, val depth: Int = 0) : MdBlock
     data class Table(val rows: List<List<String>>) : MdBlock
     data object Rule : MdBlock
+}
+
+fun MdBlock.body(): String = when (this) {
+    is MdBlock.Heading -> text
+    is MdBlock.Paragraph -> text
+    is MdBlock.Bullet -> text
+    is MdBlock.Numbered -> text
+    is MdBlock.Quote -> text
+    is MdBlock.Table -> ""
+    is MdBlock.Rule -> ""
+}
+
+fun renderMarkdown(blocks: List<MdBlock>): String = blocks.joinToString("\n\n") { block ->
+    when (block) {
+        is MdBlock.Heading -> "${"#".repeat(block.level.coerceIn(1, 3))} ${block.text}"
+        is MdBlock.Paragraph -> block.text
+        is MdBlock.Bullet -> {
+            val mark = when (block.checked) {
+                null -> "- "
+                true -> "- [x] "
+                false -> "- [ ] "
+            }
+            "  ".repeat(block.depth) + mark + block.text
+        }
+        is MdBlock.Numbered -> "  ".repeat(block.depth) + "${block.index}. ${block.text}"
+        is MdBlock.Quote -> "> ".repeat(block.depth + 1) + block.text
+        is MdBlock.Rule -> "---"
+        is MdBlock.Table -> {
+            val lines = block.rows.map { row -> "| ${row.joinToString(" | ")} |" }.toMutableList()
+            if (lines.size >= 1) {
+                val cells = block.rows.first().size.coerceAtLeast(1)
+                lines.add(1, "| ${List(cells) { "---" }.joinToString(" | ")} |")
+            }
+            lines.joinToString("\n")
+        }
+    }
 }
 
 fun parseMarkdown(source: String): List<MdBlock> {
@@ -17,6 +53,7 @@ fun parseMarkdown(source: String): List<MdBlock> {
     while (index < lines.size) {
         val raw = lines[index]
         val trim = raw.trim()
+        val depth = leadingDepth(raw)
         if (trim.isEmpty()) {
             index++
             continue
@@ -44,24 +81,25 @@ fun parseMarkdown(source: String): List<MdBlock> {
         }
         val check = checkPattern.find(trim)
         if (check != null) {
-            out += MdBlock.Bullet(check.groupValues[2], check.groupValues[1].equals("x", ignoreCase = true))
+            out += MdBlock.Bullet(check.groupValues[2], check.groupValues[1].equals("x", ignoreCase = true), depth)
             index++
             continue
         }
         val bullet = bulletPattern.find(trim)
         if (bullet != null) {
-            out += MdBlock.Bullet(bullet.groupValues[1], null)
+            out += MdBlock.Bullet(bullet.groupValues[1], null, depth)
             index++
             continue
         }
         val number = numberPattern.find(trim)
         if (number != null) {
-            out += MdBlock.Numbered(number.groupValues[1], number.groupValues[2])
+            out += MdBlock.Numbered(number.groupValues[1], number.groupValues[2], depth)
             index++
             continue
         }
         if (trim.startsWith(">")) {
-            out += MdBlock.Quote(trim.removePrefix(">").trim())
+            val marks = trim.takeWhile { it == '>' }.length.coerceAtLeast(1)
+            out += MdBlock.Quote(trim.drop(marks).trim(), marks - 1)
             index++
             continue
         }
@@ -74,6 +112,18 @@ fun parseMarkdown(source: String): List<MdBlock> {
         out += MdBlock.Paragraph(text.toString())
     }
     return out
+}
+
+private fun leadingDepth(raw: String): Int {
+    var spaces = 0
+    for (char in raw) {
+        when (char) {
+            ' ' -> spaces++
+            '\t' -> spaces += 2
+            else -> return spaces / 2
+        }
+    }
+    return spaces / 2
 }
 
 private fun isTable(line: String) = line.startsWith("|") && line.indexOf('|', 1) > 0

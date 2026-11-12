@@ -9,6 +9,7 @@ import computer.kolektiv.hold.model.inLast
 import computer.kolektiv.hold.model.isExampleSet
 import computer.kolektiv.hold.parse.parseMarkdown
 import computer.kolektiv.hold.parse.MdBlock
+import computer.kolektiv.hold.parse.renderMarkdown
 import computer.kolektiv.hold.model.buildSeed
 import computer.kolektiv.hold.parse.parseFlipper
 import computer.kolektiv.hold.parse.spotText
@@ -50,6 +51,10 @@ class HoldTest {
         assertTrue(blocks[1] is MdBlock.Bullet)
         val table = blocks[2] as MdBlock.Table
         assertEquals(listOf("shed", "12"), table.rows[1])
+        val nested = parseMarkdown("- parent\n  - child\n")
+        assertEquals(0, (nested[0] as MdBlock.Bullet).depth)
+        assertEquals(1, (nested[1] as MdBlock.Bullet).depth)
+        assertTrue(renderMarkdown(nested).contains("  - child"))
     }
 
     @Test

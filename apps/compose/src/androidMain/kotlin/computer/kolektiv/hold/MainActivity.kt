@@ -375,6 +375,12 @@ private class AndroidPorts(private val activity: MainActivity) : PocketPorts {
         return true
     }
 
+    override fun outsideJump(index: Int) {
+        if (shelf.isEmpty()) return
+        val keep = index.coerceAtLeast(0) + 1
+        while (shelf.size > keep) shelf.removeLast()
+    }
+
     override fun outsidePath(): String = shelf.joinToString(" / ") { it.second }
 
     override fun outsideRead(id: String): ByteArray? {
