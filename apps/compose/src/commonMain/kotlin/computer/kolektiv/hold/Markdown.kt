@@ -1,6 +1,7 @@
 package computer.kolektiv.hold
 
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +26,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
@@ -48,7 +50,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-private class Piece(val id: Int, val block: MdBlock, val value: TextFieldValue)
+private data class Piece(val id: Int, val block: MdBlock, val value: TextFieldValue)
 
 @Composable
 fun MarkdownBody(source: String, style: TextStyle) {
@@ -66,8 +68,12 @@ fun MarkdownEditor(initial: String, onChange: (String) -> Unit, style: TextStyle
         mutableStateOf(parsed.mapIndexed { index, block -> Piece(index, block, TextFieldValue(block.body(), androidx.compose.ui.text.TextRange(block.body().length))) })
     }
     var focus by remember(initial) { mutableIntStateOf(0) }
+    var editing by remember(initial) { mutableStateOf<Pair<Int, Int>?>(null) }
+    var draft by remember(initial) { mutableStateOf(TextFieldValue("")) }
     var dragId by remember { mutableIntStateOf(-1) }
     var dragY by remember { mutableStateOf(0f) }
+    var itemDrag by remember { mutableIntStateOf(-1) }
+    var itemDragY by remember { mutableStateOf(0f) }
     val holder = remember(initial) { PieceHolder(pieces) }
     holder.items = pieces
     fun publish(next: List<Piece>) {
@@ -80,8 +86,32 @@ fun MarkdownEditor(initial: String, onChange: (String) -> Unit, style: TextStyle
             val index = focus.coerceIn(0, pieces.lastIndex.coerceAtLeast(0))
             if (pieces.isEmpty()) return@MarkdownBar
             val piece = pieces[index]
-            val edited = retarget(piece.block, piece.value, action)
-            publish(pieces.toMutableList().also { it[index] = Piece(piece.id, edited.first, edited.second) })
+            val list = piece.block as? MdBlock.ItemList
+            val itemAt = editing?.takeIf { it.first == piece.id }?.second ?: -1
+            if (list != null && itemAt in list.items.indices) {
+                val item = list.items[itemAt]
+                when (action) {
+                    "bullet" -> publish(pieces.toMutableList().also { it[index] = piece.copy(block = list.copy(ordered = false)) })
+                    "number" -> publish(pieces.toMutableList().also {
+                        it[index] = piece.copy(block = list.copy(ordered = true, items = numberItems(list.items)))
+                    })
+                    else -> {
+                        val edited = retargetItem(item, draft, action)
+                        val items = list.items.toMutableList()
+                        items[itemAt] = edited.first
+                        draft = edited.second
+                        publish(pieces.toMutableList().also { it[index] = piece.copy(block = list.copy(items = items)) })
+                    }
+                }
+            } else {
+                val value = if (editing?.first == piece.id) draft else {
+                    val text = piece.block.body()
+                    TextFieldValue(text, androidx.compose.ui.text.TextRange(0, text.length))
+                }
+                val edited = retarget(piece.block, value, action)
+                if (editing?.first == piece.id) draft = edited.second
+                publish(pieces.toMutableList().also { it[index] = Piece(piece.id, edited.first, edited.second) })
+            }
         }
         pieces.forEachIndexed { index, piece ->
             val current = holder
@@ -93,6 +123,7 @@ fun MarkdownEditor(initial: String, onChange: (String) -> Unit, style: TextStyle
                         .offset { IntOffset(0, if (dragId == piece.id) dragY.roundToInt() else 0) }
                         .padding(start = ((piece.block as? MdBlock.Bullet)?.depth ?: (piece.block as? MdBlock.Numbered)?.depth ?: (piece.block as? MdBlock.Quote)?.depth ?: 0).times(16).dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.Top,
                 ) {
                     Text(
                         "⋮⋮",
@@ -138,22 +169,95 @@ fun MarkdownEditor(initial: String, onChange: (String) -> Unit, style: TextStyle
                         }.padding(vertical = 8.dp),
                     )
                     Box(Modifier.weight(1f)) {
-                        when (val block = piece.block) {
-                            is MdBlock.Table -> TableEdit(block, style) { rows ->
+                        val block = piece.block
+                        if (block is MdBlock.ItemList) {
+                            ListEdit(
+                                block = block,
+                                style = style,
+                                pieceId = piece.id,
+                                editing = editing,
+                                draft = draft,
+                                itemDrag = itemDrag,
+                                itemDragY = itemDragY,
+                                onEdit = { item ->
+                                    focus = index
+                                    editing = piece.id to item
+                                    val text = block.items[item].text
+                                    draft = TextFieldValue(text, androidx.compose.ui.text.TextRange(text.length))
+                                },
+                                onDraft = { value ->
+                                    val at = editing?.second ?: return@ListEdit
+                                    if (at !in block.items.indices) return@ListEdit
+                                    if ('\n' in value.text) {
+                                        val parts = value.text.split('\n', limit = 2)
+                                        val items = block.items.toMutableList()
+                                        val currentItem = items[at]
+                                        items[at] = currentItem.copy(text = parts[0])
+                                        items.add(at + 1, siblingItem(block, currentItem, parts[1]))
+                                        draft = TextFieldValue(parts[1], androidx.compose.ui.text.TextRange(parts[1].length))
+                                        editing = piece.id to (at + 1)
+                                        val nextItems = if (block.ordered) numberItems(items) else items
+                                        publish(pieces.toMutableList().also { it[index] = piece.copy(block = block.copy(items = nextItems)) })
+                                    } else {
+                                        draft = value
+                                        val items = block.items.toMutableList()
+                                        items[at] = items[at].copy(text = value.text)
+                                        publish(pieces.toMutableList().also { it[index] = piece.copy(block = block.copy(items = items)) })
+                                    }
+                                },
+                                onToggle = { item ->
+                                    val items = block.items.toMutableList()
+                                    val currentItem = items[item]
+                                    items[item] = currentItem.copy(checked = when (currentItem.checked) {
+                                        null -> false
+                                        false -> true
+                                        true -> null
+                                    })
+                                    publish(pieces.toMutableList().also { it[index] = piece.copy(block = block.copy(items = items)) })
+                                },
+                                onMoveItem = { from, to ->
+                                    val items = block.items.toMutableList()
+                                    val moved = items.removeAt(from)
+                                    items.add(to, moved)
+                                    if (editing?.first == piece.id && editing?.second == from) editing = piece.id to to
+                                    val nextItems = if (block.ordered) numberItems(items) else items
+                                    publish(pieces.toMutableList().also { it[index] = piece.copy(block = block.copy(items = nextItems)) })
+                                },
+                                onDrag = { id, y ->
+                                    itemDrag = id
+                                    itemDragY = y
+                                },
+                            )
+                        } else if (block is MdBlock.Table) {
+                            TableEdit(block, style) { rows ->
                                 publish(pieces.toMutableList().also { it[index] = Piece(piece.id, MdBlock.Table(rows), piece.value) })
                             }
-                            is MdBlock.Rule -> HorizontalDivider(color = HoldThemeColors.fg.copy(alpha = 0.35f), modifier = Modifier.padding(vertical = 10.dp))
-                            else -> BasicTextField(
-                                value = piece.value,
-                                onValueChange = { value ->
+                        } else if (block is MdBlock.Rule) {
+                            HorizontalDivider(color = HoldThemeColors.fg.copy(alpha = 0.35f), modifier = Modifier.padding(vertical = 10.dp))
+                        } else {
+                            val open = editing?.first == piece.id
+                            if (open) {
+                                BasicTextField(
+                                    value = draft,
+                                    onValueChange = { value ->
+                                        draft = value
+                                        publish(pieces.toMutableList().also { it[index] = Piece(piece.id, withBody(block, value.text), value) })
+                                    },
+                                    textStyle = styleFor(block, style),
+                                    cursorBrush = SolidColor(HoldThemeColors.accent),
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            } else {
+                                Box(Modifier.fillMaxWidth().clickable {
                                     focus = index
-                                    val written = withBody(piece.block, value.text)
-                                    publish(pieces.toMutableList().also { it[index] = Piece(piece.id, written, value) })
-                                },
-                                textStyle = styleFor(piece.block, style),
-                                cursorBrush = SolidColor(HoldThemeColors.accent),
-                                modifier = Modifier.fillMaxWidth(),
-                            )
+                                    editing = piece.id to -1
+                                    val text = block.body()
+                                    draft = TextFieldValue(text, androidx.compose.ui.text.TextRange(text.length))
+                                }) {
+                                    if (block.body().isBlank()) Text("Write", style = style, color = HoldThemeColors.muted)
+                                    else BlockView(block, style)
+                                }
+                            }
                         }
                     }
                 }
@@ -163,6 +267,86 @@ fun MarkdownEditor(initial: String, onChange: (String) -> Unit, style: TextStyle
 }
 
 private class PieceHolder(var items: List<Piece>)
+
+@Composable
+private fun ListEdit(
+    block: MdBlock.ItemList,
+    style: TextStyle,
+    pieceId: Int,
+    editing: Pair<Int, Int>?,
+    draft: TextFieldValue,
+    itemDrag: Int,
+    itemDragY: Float,
+    onEdit: (Int) -> Unit,
+    onDraft: (TextFieldValue) -> Unit,
+    onToggle: (Int) -> Unit,
+    onMoveItem: (Int, Int) -> Unit,
+    onDrag: (Int, Float) -> Unit,
+) {
+    Column {
+        block.items.forEachIndexed { index, item ->
+            val open = editing?.first == pieceId && editing.second == index
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .zIndex(if (itemDrag == index) 1f else 0f)
+                    .offset { IntOffset(0, if (itemDrag == index) itemDragY.roundToInt() else 0) }
+                    .padding(start = (item.depth * 16).dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Text(
+                    "⋮",
+                    color = HoldThemeColors.muted,
+                    modifier = Modifier.pointerInput(pieceId, index, block.items.size) {
+                        var accum = 0f
+                        detectDragGestures(
+                            onDragStart = {
+                                accum = 0f
+                                onDrag(index, 0f)
+                            },
+                            onDragEnd = { onDrag(-1, 0f) },
+                            onDragCancel = { onDrag(-1, 0f) },
+                            onDrag = { change, drag ->
+                                change.consume()
+                                accum += drag.y
+                                onDrag(index, accum)
+                                val step = 36.dp.toPx()
+                                if (accum > step && index < block.items.lastIndex) {
+                                    accum = 0f
+                                    onDrag(-1, 0f)
+                                    onMoveItem(index, index + 1)
+                                } else if (accum < -step && index > 0) {
+                                    accum = 0f
+                                    onDrag(-1, 0f)
+                                    onMoveItem(index, index - 1)
+                                }
+                            },
+                        )
+                    }.padding(top = 2.dp, end = 6.dp),
+                )
+                Text(
+                    itemMark(block.ordered, item, index),
+                    style = style,
+                    modifier = Modifier.clickable { onToggle(index) }.padding(end = 8.dp),
+                )
+                if (open) {
+                    BasicTextField(
+                        value = draft,
+                        onValueChange = onDraft,
+                        textStyle = style,
+                        cursorBrush = SolidColor(HoldThemeColors.accent),
+                        modifier = Modifier.weight(1f),
+                    )
+                } else {
+                    Box(Modifier.weight(1f).clickable { onEdit(index) }) {
+                        if (item.text.isBlank()) Text("Item", style = style, color = HoldThemeColors.muted)
+                        else Text(inline(item.text), style = style)
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun BlockView(block: MdBlock, style: TextStyle) {
@@ -193,6 +377,14 @@ private fun BlockView(block: MdBlock, style: TextStyle) {
             Text(inline(block.text), style = style)
         }
         is MdBlock.Quote -> Text(inline(block.text), style = style, color = HoldThemeColors.muted, modifier = Modifier.padding(start = (12 + nest).dp))
+        is MdBlock.ItemList -> Column {
+            block.items.forEachIndexed { index, item ->
+                Row(Modifier.padding(start = (item.depth * 16).dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(itemMark(block.ordered, item, index), style = style)
+                    Text(inline(item.text), style = style)
+                }
+            }
+        }
         is MdBlock.Rule -> HorizontalDivider(color = HoldThemeColors.fg.copy(alpha = 0.2f))
         is MdBlock.Table -> Row(Modifier.horizontalScroll(rememberScrollState())) {
             Column {
@@ -277,9 +469,9 @@ private fun retarget(block: MdBlock, value: TextFieldValue, action: String): Pai
             val level = if (block is MdBlock.Heading) (block.level % 3) + 1 else 2
             MdBlock.Heading(level, value.text) to value
         }
-        "bullet" -> MdBlock.Bullet(value.text, null, depth) to value
-        "number" -> MdBlock.Numbered("1", value.text, depth) to value
-        "check" -> MdBlock.Bullet(value.text, false, depth) to value
+        "bullet" -> MdBlock.ItemList(ordered = false, items = listOf(MdBlock.ListItem(value.text))) to value
+        "number" -> MdBlock.ItemList(ordered = true, items = listOf(MdBlock.ListItem(value.text, index = "1"))) to value
+        "check" -> MdBlock.ItemList(ordered = false, items = listOf(MdBlock.ListItem(value.text, checked = false))) to value
         "quote" -> MdBlock.Quote(value.text, depth) to value
         "nest" -> shift(block, 1) to value
         "lift" -> shift(block, -1) to value
@@ -304,8 +496,48 @@ private fun withBody(block: MdBlock, text: String): MdBlock = when (block) {
     is MdBlock.Bullet -> block.copy(text = text)
     is MdBlock.Numbered -> block.copy(text = text)
     is MdBlock.Quote -> block.copy(text = text)
+    is MdBlock.ItemList -> block
     is MdBlock.Table -> block
     is MdBlock.Rule -> block
+}
+
+private fun retargetItem(item: MdBlock.ListItem, value: TextFieldValue, action: String): Pair<MdBlock.ListItem, TextFieldValue> {
+    return when (action) {
+        "nest" -> item.copy(depth = item.depth + 1) to value
+        "lift" -> item.copy(depth = (item.depth - 1).coerceAtLeast(0)) to value
+        "check" -> item.copy(checked = when (item.checked) {
+            null -> false
+            false -> true
+            true -> null
+        }) to value
+        else -> {
+            val next = applyMarkdown(value, action)
+            item.copy(text = next.text) to next
+        }
+    }
+}
+
+private fun siblingItem(block: MdBlock.ItemList, item: MdBlock.ListItem, text: String): MdBlock.ListItem {
+    val checked = if (item.checked != null) false else null
+    val index = if (block.ordered) ((item.index.toIntOrNull() ?: 1) + 1).toString() else ""
+    return MdBlock.ListItem(text, checked, item.depth, index)
+}
+
+private fun numberItems(items: List<MdBlock.ListItem>): List<MdBlock.ListItem> {
+    val counters = mutableMapOf<Int, Int>()
+    return items.map { item ->
+        val next = (counters[item.depth] ?: 0) + 1
+        counters[item.depth] = next
+        counters.keys.filter { it > item.depth }.forEach { counters.remove(it) }
+        item.copy(index = next.toString())
+    }
+}
+
+private fun itemMark(ordered: Boolean, item: MdBlock.ListItem, index: Int): String = when {
+    item.checked == true -> "☑"
+    item.checked == false -> "☐"
+    ordered -> "${item.index.ifBlank { "${index + 1}" }}."
+    else -> "•"
 }
 
 fun applyMarkdown(value: TextFieldValue, action: String): TextFieldValue = when (action) {

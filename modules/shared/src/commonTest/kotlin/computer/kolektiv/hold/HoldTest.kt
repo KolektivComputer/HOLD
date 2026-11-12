@@ -48,12 +48,15 @@ class HoldTest {
         assertFalse(inLast(now - 8L * 86_400_000L, now, "week"))
         val blocks = parseMarkdown("# Gate\n\n- [x] lock\n\n| Name | Code |\n| --- | --- |\n| shed | 12 |\n")
         assertTrue(blocks[0] is MdBlock.Heading)
-        assertTrue(blocks[1] is MdBlock.Bullet)
+        val checks = blocks[1] as MdBlock.ItemList
+        assertEquals("lock", checks.items.single().text)
+        assertEquals(true, checks.items.single().checked)
         val table = blocks[2] as MdBlock.Table
         assertEquals(listOf("shed", "12"), table.rows[1])
         val nested = parseMarkdown("- parent\n  - child\n")
-        assertEquals(0, (nested[0] as MdBlock.Bullet).depth)
-        assertEquals(1, (nested[1] as MdBlock.Bullet).depth)
+        val list = nested.single() as MdBlock.ItemList
+        assertEquals(0, list.items[0].depth)
+        assertEquals(1, list.items[1].depth)
         assertTrue(renderMarkdown(nested).contains("  - child"))
     }
 

@@ -6,6 +6,8 @@ sealed interface MdBlock {
     data class Bullet(val text: String, val checked: Boolean? = null, val depth: Int = 0) : MdBlock
     data class Numbered(val index: String, val text: String, val depth: Int = 0) : MdBlock
     data class Quote(val text: String, val depth: Int = 0) : MdBlock
+    data class ListItem(val text: String, val checked: Boolean? = null, val depth: Int = 0, val index: String = "")
+    data class ItemList(val ordered: Boolean = false, val items: List<ListItem> = emptyList()) : MdBlock
     data class Table(val rows: List<List<String>>) : MdBlock
     data object Rule : MdBlock
 }
@@ -16,6 +18,7 @@ fun MdBlock.body(): String = when (this) {
     is MdBlock.Bullet -> text
     is MdBlock.Numbered -> text
     is MdBlock.Quote -> text
+    is MdBlock.ItemList -> items.joinToString("\n") { it.text }
     is MdBlock.Table -> ""
     is MdBlock.Rule -> ""
 }
@@ -34,6 +37,18 @@ fun renderMarkdown(blocks: List<MdBlock>): String = blocks.joinToString("\n\n") 
         }
         is MdBlock.Numbered -> "  ".repeat(block.depth) + "${block.index}. ${block.text}"
         is MdBlock.Quote -> "> ".repeat(block.depth + 1) + block.text
+        is MdBlock.ItemList -> block.items.joinToString("\n") { item ->
+            val pad = "  ".repeat(item.depth)
+            if (block.ordered) pad + "${item.index.ifBlank { "1" }}. ${item.text}"
+            else {
+                val mark = when (item.checked) {
+                    null -> "- "
+                    true -> "- [x] "
+                    false -> "- [ ] "
+                }
+                pad + mark + item.text
+            }
+        }
         is MdBlock.Rule -> "---"
         is MdBlock.Table -> {
             val lines = block.rows.map { row -> "| ${row.joinToString(" | ")} |" }.toMutableList()
@@ -110,6 +125,38 @@ fun parseMarkdown(source: String): List<MdBlock> {
             index++
         }
         out += MdBlock.Paragraph(text.toString())
+    }
+    return groupLists(out)
+}
+
+private fun groupLists(flat: List<MdBlock>): List<MdBlock> {
+    val out = mutableListOf<MdBlock>()
+    var index = 0
+    while (index < flat.size) {
+        when (val block = flat[index]) {
+            is MdBlock.Bullet -> {
+                val items = mutableListOf<MdBlock.ListItem>()
+                while (index < flat.size && flat[index] is MdBlock.Bullet) {
+                    val item = flat[index] as MdBlock.Bullet
+                    items += MdBlock.ListItem(item.text, item.checked, item.depth)
+                    index++
+                }
+                out += MdBlock.ItemList(ordered = false, items = items)
+            }
+            is MdBlock.Numbered -> {
+                val items = mutableListOf<MdBlock.ListItem>()
+                while (index < flat.size && flat[index] is MdBlock.Numbered) {
+                    val item = flat[index] as MdBlock.Numbered
+                    items += MdBlock.ListItem(item.text, depth = item.depth, index = item.index)
+                    index++
+                }
+                out += MdBlock.ItemList(ordered = true, items = items)
+            }
+            else -> {
+                out += block
+                index++
+            }
+        }
     }
     return out
 }
